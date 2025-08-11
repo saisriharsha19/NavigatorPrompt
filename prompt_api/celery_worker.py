@@ -84,6 +84,8 @@ def add_to_library_task(task_id: str, request_data: dict):
             payload = {"model": settings.MODEL_NAME, "messages": [{"role": "user", "content": formatted_prompt}]}
 
             async with httpx.AsyncClient(timeout=300.0) as client:
+                if not settings.BASE_URL:
+                    raise ValueError("settings.BASE_URL is not set")
                 response = await client.post(settings.BASE_URL, json=payload, headers=headers)
                 response.raise_for_status()
 
@@ -104,7 +106,7 @@ def add_to_library_task(task_id: str, request_data: dict):
             # Associate the final library prompt with the task for retrieval
             task.library_prompt = new_prompt
             task.status = "SUCCESS"
-            task.completed_at = datetime.utcnow()
+            task.completed_at = datetime.now()
             await session.commit()
             logger.info(f"Task {task_id} (add_to_library) completed successfully.")
 
