@@ -3,8 +3,28 @@
 
 import { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import { useToast } from './use-toast';
-import { addHistoryPromptToDB, deleteHistoryPromptFromDB, getHistoryPromptsFromDB } from '@/app/actions';
+import { deleteHistoryPromptFromDB, getHistoryPromptsFromDB } from '@/app/actions';
 import { useAuth } from './use-auth';
+
+// Represents a user in the system
+export type User = {
+  id: string;
+  email: string;
+  username: string;
+  full_name: string;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+// Represents platform-wide statistics
+export type PlatformStats = {
+  total_users: number;
+  total_prompts_in_history: number;
+  total_prompts_in_library: number;
+  pending_submissions: number;
+};
 
 export type Prompt = {
   id: string;
@@ -18,10 +38,20 @@ export type Prompt = {
   isStarredByUser?: boolean;
 };
 
+export type LibrarySubmission = {
+    id: string;
+    prompt_text: string;
+    user_id: string;
+    status: 'PENDING' | 'APPROVED' | 'REJECTED';
+    submitted_at: string;
+    admin_notes?: string;
+    user?: User; 
+};
+
+
 type PromptHistoryContextType = {
   prompts: Prompt[];
   isLoading: boolean;
-  addPrompt: (text: string) => Promise<void>;
   deletePrompt: (id: string) => Promise<void>;
 };
 
@@ -31,7 +61,7 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
-  const { isAuthenticated, userId } = useAuth();
+  const { isAuthenticated, userId, isAdmin } = useAuth();
 
   useEffect(() => {
     const loadPrompts = async () => {
@@ -58,30 +88,6 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
     loadPrompts();
   }, [isAuthenticated, userId, toast]);
 
-  const addPrompt = useCallback(async (text: string) => {
-    if (!isAuthenticated || !userId) {
-      // Don't show toast for guests, just fail silently.
-      return;
-    }
-    
-    if (!text.trim()) return;
-    
-    // Avoid adding exact duplicates in a row
-    if (prompts[0]?.text === text) {
-      return;
-    }
-
-    try {
-      const newPrompt = await addHistoryPromptToDB(text, userId);
-      setPrompts(prev => [newPrompt, ...prev].slice(0, 20)); // Keep client state in sync with limit
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Save to History Failed',
-        description: error.message || 'An error occurred while saving the prompt.',
-      });
-    }
-  }, [isAuthenticated, userId, prompts, toast]);
 
   const deletePrompt = useCallback(async (id: string) => {
     if (!isAuthenticated || !userId) {
@@ -92,13 +98,22 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
       });
       return;
     }
+    
+    if (!isAdmin) {
+      toast({
+        variant: 'destructive',
+        title: 'Permission Denied',
+        description: 'Only admins can delete prompts from history.',
+      });
+      return;
+    }
 
     try {
       await deleteHistoryPromptFromDB(id, userId);
       setPrompts(prev => prev.filter(p => p.id !== id));
       toast({
         title: 'Prompt Deleted',
-        description: 'The prompt has been removed from your history.',
+        description: 'The prompt has been removed from the user\'s history.',
       });
     } catch (error: any) {
       toast({
@@ -107,10 +122,10 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
         description: error.message || 'An error occurred while deleting the prompt.',
       });
     }
-  }, [isAuthenticated, userId, toast]);
+  }, [isAuthenticated, userId, toast, isAdmin]);
 
   return (
-    <PromptHistoryContext.Provider value={{ prompts, addPrompt, deletePrompt, isLoading }}>
+    <PromptHistoryContext.Provider value={{ prompts, deletePrompt, isLoading }}>
       {children}
     </PromptHistoryContext.Provider>
   );

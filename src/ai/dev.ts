@@ -1,10 +1,6 @@
 import { config } from 'dotenv';
 config();
 
-import '@/ai/flows/generate-initial-prompt.ts';
-import '@/ai/flows/evaluate-and-iterate-prompt.ts';
-import '@/ai/flows/optimize-prompt-with-context.ts';
-import '@/ai/flows/iterate-on-prompt.ts';
-import '@/ai/flows/get-prompt-suggestions.ts';
-import '@/ai/flows/generate-prompt-tags.ts';
-import '@/ai/flows/scrape-url-flow.ts';
+// The Genkit flows below are no longer used and have been removed.
+// The application now uses a Python backend for AI tasks.
+// Keeping this file for potential future local Genkit development.
