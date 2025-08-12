@@ -3,7 +3,7 @@
 
 import { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import { useToast } from './use-toast';
-import { addLibraryPromptToDB, getLibraryPromptsFromDB, toggleStarForPrompt, deleteLibraryPromptFromDB } from '@/app/actions';
+import { submitPromptToLibrary, getLibraryPromptsFromDB, toggleStarForPrompt, deleteLibraryPromptFromDB } from '@/app/actions';
 import { useAuth } from './use-auth';
 import type { Prompt } from './use-prompts';
 
@@ -11,7 +11,7 @@ import type { Prompt } from './use-prompts';
 type LibraryContextType = {
   libraryPrompts: Prompt[];
   isLoading: boolean;
-  addLibraryPrompt: (text: string) => Promise<void>;
+  addLibrarySubmission: (text: string) => Promise<void>;
   toggleStar: (id: string) => Promise<void>;
   deleteLibraryPrompt: (id: string) => Promise<void>;
 };
@@ -27,12 +27,6 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, userId, isAdmin } = useAuth();
 
   const loadPrompts = useCallback(async (isInitialLoad = false) => {
-    if (!isAuthenticated) {
-      setLibraryPrompts([]);
-      if (isInitialLoad) setIsLoading(false);
-      return;
-    }
-    
     if (isInitialLoad) setIsLoading(true);
 
     try {
@@ -48,7 +42,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     } finally {
       if (isInitialLoad) setIsLoading(false);
     }
-  }, [toast, userId, isAuthenticated]);
+  }, [toast, userId]);
 
 
   useEffect(() => {
@@ -58,16 +52,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       loadPrompts(false); // Subsequent polls
     }, POLLING_INTERVAL);
 
-    // Clean up the interval on component unmount
     return () => clearInterval(interval);
   }, [loadPrompts]);
 
-  const addLibraryPrompt = useCallback(async (text: string) => {
+  const addLibrarySubmission = useCallback(async (text: string) => {
     if (!isAuthenticated || !userId) {
       toast({
         variant: 'destructive',
         title: 'Authentication Required',
-        description: 'You must be signed in to add prompts to the public library.',
+        description: 'You must be signed in to submit prompts to the public library.',
       });
       return;
     }
@@ -75,21 +68,19 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     if (!text.trim()) return;
     
     try {
-      await addLibraryPromptToDB({ prompt_text: text, user_id: userId });
+      await submitPromptToLibrary({ prompt_text: text });
       toast({
-        title: 'Prompt Added to Library',
-        description: 'The new prompt has been added to the public library.',
+        title: 'Prompt Submitted to Library',
+        description: 'Your prompt has been sent for admin approval.',
       });
-      // Re-fetch the entire list to ensure correct order and data.
-      await loadPrompts(false);
     } catch (error: any) {
       toast({
         variant: 'destructive',
-        title: 'Add to Library Failed',
-        description: error.message || 'An error occurred while saving the prompt.',
+        title: 'Submission Failed',
+        description: error.message || 'An error occurred while submitting the prompt.',
       });
     }
-  }, [isAuthenticated, userId, toast, loadPrompts]);
+  }, [isAuthenticated, userId, toast]);
 
   const deleteLibraryPrompt = useCallback(async (id: string) => {
     if (!isAuthenticated || !userId || !isAdmin) {
@@ -130,7 +121,6 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     const originalPrompts = [...libraryPrompts];
     let optimisticAction: 'starred' | 'unstarred' | undefined;
 
-    // Optimistic update
     setLibraryPrompts(prev =>
       prev.map(p => {
         if (p.id === promptId) {
@@ -149,9 +139,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
     try {
         const result = await toggleStarForPrompt(promptId, { user_id: userId });
-        // If the optimistic action was wrong, or to ensure consistency, we can reload.
         if (result.action !== optimisticAction) {
-           await loadPrompts(false); // Resync state if server disagrees with optimistic update.
+           await loadPrompts(false); 
         }
     } catch (error: any) {
         toast({
@@ -159,13 +148,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
             title: 'Error',
             description: error.message,
         });
-        // Revert optimistic update on failure
         setLibraryPrompts(originalPrompts);
     }
   }, [isAuthenticated, userId, toast, libraryPrompts, loadPrompts]);
 
   return (
-    <LibraryContext.Provider value={{ libraryPrompts, addLibraryPrompt, toggleStar, isLoading, deleteLibraryPrompt }}>
+    <LibraryContext.Provider value={{ libraryPrompts, addLibrarySubmission, toggleStar, isLoading, deleteLibraryPrompt }}>
       {children}
     </LibraryContext.Provider>
   );
@@ -178,3 +166,5 @@ export function useLibrary() {
   }
   return context;
 }
+
+    

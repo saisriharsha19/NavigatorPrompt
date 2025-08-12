@@ -54,55 +54,58 @@ import { DocumentManager } from './document-manager';
 
 type ActionType = 'generate' | 'evaluate' | 'suggest' | null;
 
-// Helper to format metric names for display
 const formatMetricName = (name: string) => {
     const spaced = name.replace(/_score$/, '').replace(/_/g, ' ');
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 };
 
+const containerVariants = {
+  hidden: { opacity: 1 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+    },
+  },
+};
+
+const itemVariants = {
+  hidden: { y: 20, opacity: 0 },
+  visible: {
+    y: 0,
+    opacity: 1,
+    transition: {
+      type: 'spring',
+      stiffness: 100,
+      damping: 10,
+    },
+  },
+};
 
 export function PromptForgeClient() {
   const { isAuthenticated, userId, login } = useAuth();
-  const { addPrompt } = usePromptHistory();
-  const { addLibraryPrompt } = useLibrary();
+  const { addLibrarySubmission } = useLibrary();
   const { toast } = useToast();
 
   const {
     userNeeds, setUserNeeds,
     currentPrompt, setCurrentPrompt,
+    contextualPrompt,
     iterationComments, setIterationComments,
     suggestions, setSuggestions,
     selectedSuggestions, setSelectedSuggestions,
     evaluationResult, setEvaluationResult,
     processingState, setProcessingState,
     taskStatusUrl, setTaskStatusUrl,
+    uploadedFiles,
   } = usePromptForge();
 
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   
-  // Use a ref to ensure polling intervals don't conflict or get redefined on re-renders
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const suggestionPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const [copied, setCopied] = useState(false);
-
-  const containerVariants = {
-    hidden: { opacity: 1 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.1,
-      },
-    },
-  };
-
-  const itemVariants = {
-    hidden: { y: 20, opacity: 0 },
-    visible: {
-      y: 0,
-      opacity: 1,
-    },
-  };
 
   const copyToClipboard = (text: string) => {
     if (!text) return;
@@ -185,12 +188,10 @@ export function PromptForgeClient() {
             if (actionType === 'generate' && 'initial_prompt' in (task.result as any)) {
                 const result = task.result as GenerateInitialPromptOutput;
                 setCurrentPrompt(result.initial_prompt);
-                if (isAuthenticated) addPrompt(result.initial_prompt);
             } else if (actionType === 'evaluate' && 'improved_prompt' in (task.result as any)) {
                 const result = task.result as EvaluateAndIteratePromptOutput;
                 setEvaluationResult(result);
                 setCurrentPrompt(result.improved_prompt);
-                if (isAuthenticated) addPrompt(result.improved_prompt);
             } else if (isSuggestionTask && Array.isArray(task.result)) {
                 const result = task.result as GeneratePromptSuggestionsOutput;
                 setSuggestions(result.map(s => s.description));
@@ -228,18 +229,15 @@ export function PromptForgeClient() {
     } else {
       pollingIntervalRef.current = intervalId;
     }
-  }, [stopPolling, setTaskStatusUrl, setProcessingState, toast, setCurrentPrompt, isAuthenticated, addPrompt, setEvaluationResult, setSuggestions]);
+  }, [stopPolling, setTaskStatusUrl, setProcessingState, toast, setCurrentPrompt, setEvaluationResult, setSuggestions]);
 
-  // Effect to resume polling if the user navigates back to the page
   useEffect(() => {
     if (taskStatusUrl && processingState.activeAction) {
       pollTaskStatus(taskStatusUrl, processingState.activeAction);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run only on initial mount
+  }, []); 
 
 
-  // Cleanup polling on component unmount
   useEffect(() => {
     return () => {
       stopPolling('main');
@@ -291,8 +289,12 @@ export function PromptForgeClient() {
     const action: ActionType = 'evaluate';
     setProcessingState({ activeAction: action, statusText: 'Starting evaluation task...' });
     setEvaluationResult(null);
+
+    const docContext = uploadedFiles.map(f => `## Document: ${f.name}\n\n${f.content}`).join('\n\n');
+    const needsWithContext = `${userNeeds}\n\n--- [DOCUMENT CONTEXT] ---\n${docContext}`;
+
     try {
-      const task = await handleEvaluatePrompt({ prompt: currentPrompt, user_needs: userNeeds });
+      const task = await handleEvaluatePrompt({ prompt: currentPrompt, user_needs: needsWithContext });
       setTaskStatusUrl(task.status_url);
       setProcessingState(prev => ({ ...prev, statusText: 'Task initiated, awaiting evaluation...' }));
       pollTaskStatus(task.status_url, action);
@@ -333,21 +335,21 @@ Selected Suggestions:
     );
   };
   
-  const onUploadToLibrary = () => {
+  const onSubmitToLibrary = () => {
     if (!currentPrompt) {
         toast({
             variant: 'destructive',
             title: 'Error',
-            description: 'There is no prompt to upload.',
+            description: 'There is no prompt to submit.',
         });
         return;
     }
     if (!userId) {
-        toast({ variant: 'destructive', title: 'Authentication Error', description: 'You must be logged in to upload to the library.'});
+        toast({ variant: 'destructive', title: 'Authentication Error', description: 'You must be logged in to submit to the library.'});
         login();
         return;
     }
-    addLibraryPrompt(currentPrompt);
+    addLibrarySubmission(currentPrompt);
   };
 
   const handleCreateAssistant = () => {
@@ -355,7 +357,7 @@ Selected Suggestions:
       toast({ variant: 'destructive', title: 'Error', description: 'Please generate a prompt first.' });
       return;
     }
-    copyToClipboard(currentPrompt);
+    copyToClipboard(contextualPrompt);
     window.open('https://assistant.ai.it.ufl.edu/admin/assistants/new', '_blank', 'noopener,noreferrer');
     toast({
       title: 'Prompt Copied!',
@@ -366,44 +368,51 @@ Selected Suggestions:
   
   return (
     <TooltipProvider>
-      <div className="flex h-full flex-col gap-8">
-        <Card>
-          <CardHeader>
-            <h2 className="text-lg font-medium leading-snug">1. Describe Your Assistant</h2>
-            <CardDescription>
-              What are the primary goals and functionalities of your AI assistant? This will be used to generate the initial prompt.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <Label htmlFor="user-needs" className="sr-only">User Needs</Label>
-              <Textarea
-                id="user-needs"
-                placeholder="e.g., An assistant that helps university students find course information, check deadlines, and book appointments with advisors..."
-                value={userNeeds}
-                onChange={(e) => setUserNeeds(e.target.value)}
-                className="min-h-[120px]"
-                disabled={!!processingState.activeAction}
-              />
-            </div>
-          </CardContent>
-          <CardFooter>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button onClick={onGenerate} disabled={!!processingState.activeAction || !userNeeds} variant="destructive">
-                  {processingState.activeAction === 'generate' ? <Loader2 className="animate-spin" /> : <Sparkles />}
-                  Generate Initial Prompt
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Generate a new prompt based on your needs.</p>
-              </TooltipContent>
-            </Tooltip>
-          </CardFooter>
-        </Card>
+      <motion.div
+        className="flex h-full flex-col gap-8"
+        variants={containerVariants}
+        initial="hidden"
+        animate="visible"
+      >
+        <motion.div variants={itemVariants}>
+          <Card>
+            <CardHeader>
+              <h2 className="text-lg font-medium leading-snug">1. Describe Your Assistant</h2>
+              <CardDescription>
+                What are the primary goals and functionalities of your AI assistant? This will be used to generate the initial prompt.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <Label htmlFor="user-needs" className="sr-only">User Needs</Label>
+                <Textarea
+                  id="user-needs"
+                  placeholder="e.g., An assistant that helps university students find course information, check deadlines, and book appointments with advisors..."
+                  value={userNeeds}
+                  onChange={(e) => setUserNeeds(e.target.value)}
+                  className="min-h-[120px]"
+                  disabled={!!processingState.activeAction}
+                />
+              </div>
+            </CardContent>
+            <CardFooter>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button onClick={onGenerate} disabled={!!processingState.activeAction || !userNeeds} variant="destructive">
+                    {processingState.activeAction === 'generate' ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                    Generate Initial Prompt
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Generate a new prompt based on your needs.</p>
+                </TooltipContent>
+              </Tooltip>
+            </CardFooter>
+          </Card>
+        </motion.div>
 
         <div className="grid flex-1 grid-cols-1 gap-8 lg:grid-cols-2">
-          <div className="flex flex-col gap-8">
+          <motion.div className="flex flex-col gap-8" variants={itemVariants}>
             <Card>
               <CardHeader>
                 <h2 className="text-lg font-medium leading-snug">2. System Prompt & Context</h2>
@@ -416,19 +425,19 @@ Selected Suggestions:
                   <Textarea
                     id="system-prompt"
                     placeholder="Your generated or refined prompt will appear here."
-                    value={currentPrompt}
+                    value={contextualPrompt}
                     onChange={(e) => setCurrentPrompt(e.target.value)}
                     className="min-h-[200px] pr-12"
                     disabled={!!processingState.activeAction}
                   />
-                  {currentPrompt && (
+                  {contextualPrompt && (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
                           variant="ghost"
                           size="icon"
                           className="absolute top-3 right-3 h-8 w-8"
-                          onClick={() => copyToClipboard(currentPrompt)}
+                          onClick={() => copyToClipboard(contextualPrompt)}
                           aria-label="Copy generated prompt"
                         >
                           {copied ? <Check className="text-primary" /> : <Clipboard />}
@@ -443,9 +452,9 @@ Selected Suggestions:
               </CardContent>
             </Card>
             <DocumentManager />
-          </div>
+          </motion.div>
 
-          <div className="flex flex-col gap-8">
+          <motion.div className="flex flex-col gap-8" variants={itemVariants}>
             <AnimatePresence>
               {processingState.activeAction && (
                 <motion.div
@@ -654,21 +663,23 @@ Selected Suggestions:
                       className="w-full"
                       variant="secondary"
                       disabled={!!processingState.activeAction || !currentPrompt}
-                      onClick={onUploadToLibrary}
+                      onClick={onSubmitToLibrary}
                     >
                       <Upload />
-                      Upload to Prompt Library
+                      Submit to Prompt Library
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Share this prompt with the community by adding it to the public library.</p>
+                    <p>Submit this prompt for admin review to be added to the public library.</p>
                   </TooltipContent>
                 </Tooltip>
               </CardFooter>
             </Card>
-          </div>
+          </motion.div>
         </div>
-      </div>
+      </motion.div>
     </TooltipProvider>
   );
 }
+
+    

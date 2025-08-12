@@ -2,7 +2,7 @@
 'use client';
 
 import type { EvaluateAndIteratePromptOutput } from '@/ai/flows/evaluate-and-iterate-prompt';
-import { createContext, useContext, useState, ReactNode, Dispatch, SetStateAction, useEffect } from 'react';
+import { createContext, useContext, useState, ReactNode, Dispatch, SetStateAction, useEffect, useMemo } from 'react';
 
 type UploadedFile = {
   id: string;
@@ -22,26 +22,9 @@ type PromptForgeContextType = {
   setUserNeeds: Dispatch<SetStateAction<string>>;
   currentPrompt: string;
   setCurrentPrompt: Dispatch<SetStateAction<string>>;
-  promptsGenerated: number;
-  setPromptsGenerated: Dispatch<SetStateAction<number>>;
-  knowledgeBase: string;
-  setKnowledgeBase: Dispatch<SetStateAction<string>>;
+  contextualPrompt: string; 
   uploadedFiles: UploadedFile[];
   setUploadedFiles: Dispatch<SetStateAction<UploadedFile[]>>;
-  fewShotExamples: string;
-  setFewShotExamples: Dispatch<SetStateAction<string>>;
-  scrapeUrl: string;
-  setScrapeUrl: Dispatch<SetStateAction<string>>;
-  sitemapUrl: string;
-  setSitemapUrl: Dispatch<SetStateAction<string>>;
-  includeSubdomains: boolean;
-  setIncludeSubdomains: Dispatch<SetStateAction<boolean>>;
-  maxSubdomains: number;
-  setMaxSubdomains: Dispatch<SetStateAction<number>>;
-  maxPages: number;
-  setMaxPages: Dispatch<SetStateAction<number>>;
-  preferSitemap: boolean;
-  setPreferSitemap: Dispatch<SetStateAction<boolean>>;
   iterationComments: string;
   setIterationComments: Dispatch<SetStateAction<string>>;
   suggestions: string[];
@@ -62,16 +45,7 @@ const PromptForgeContext = createContext<PromptForgeContextType | undefined>(und
 export function PromptForgeProvider({ children }: { children: ReactNode }) {
   const [userNeeds, setUserNeeds] = useState('');
   const [currentPrompt, setCurrentPrompt] = useState('');
-  const [promptsGenerated, setPromptsGenerated] = useState(0);
-  const [knowledgeBase, setKnowledgeBase] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [fewShotExamples, setFewShotExamples] = useState('');
-  const [scrapeUrl, setScrapeUrl] = useState('');
-  const [sitemapUrl, setSitemapUrl] = useState('');
-  const [includeSubdomains, setIncludeSubdomains] = useState(false);
-  const [maxSubdomains, setMaxSubdomains] = useState(10);
-  const [maxPages, setMaxPages] = useState(100);
-  const [preferSitemap, setPreferSitemap] = useState(true);
   const [iterationComments, setIterationComments] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [selectedSuggestions, setSelectedSuggestions] = useState<string[]>([]);
@@ -85,44 +59,25 @@ export function PromptForgeProvider({ children }: { children: ReactNode }) {
   const [taskStatusUrl, setTaskStatusUrl] = useState<string | null>(null);
 
 
-  // Effect to append document context to the prompt
-  useEffect(() => {
+  const contextualPrompt = useMemo(() => {
+    if (uploadedFiles.length === 0) {
+      return currentPrompt;
+    }
     const contextMarker = '\n\n--- [DOCUMENT CONTEXT] ---';
+    const newContextContent = uploadedFiles
+      .map(file => `\n## Document: ${file.name}\n\n${file.content}`)
+      .join('\n\n');
     
-    setCurrentPrompt(prevPrompt => {
-      // Find and remove the old context block if it exists
-      const oldContextIndex = prevPrompt.indexOf(contextMarker);
-      const basePrompt = oldContextIndex !== -1 ? prevPrompt.substring(0, oldContextIndex) : prevPrompt;
+    // Always append to the current base prompt
+    return `${currentPrompt}${contextMarker}${newContextContent}`;
 
-      if (uploadedFiles.length === 0) {
-        return basePrompt; // Return just the base prompt if no files
-      }
-
-      // Build the new context block from all uploaded files
-      const newContextContent = uploadedFiles
-        .map(file => `\n## Document: ${file.name}\n\n${file.content}`)
-        .join('\n\n');
-      
-      const newContextBlock = `${contextMarker}${newContextContent}`;
-      
-      return basePrompt + newContextBlock;
-    });
-  }, [uploadedFiles, setCurrentPrompt]);
-
+  }, [currentPrompt, uploadedFiles]);
 
   const value = {
     userNeeds, setUserNeeds,
     currentPrompt, setCurrentPrompt,
-    promptsGenerated, setPromptsGenerated,
-    knowledgeBase, setKnowledgeBase,
+    contextualPrompt,
     uploadedFiles, setUploadedFiles,
-    fewShotExamples, setFewShotExamples,
-    scrapeUrl, setScrapeUrl,
-    sitemapUrl, setSitemapUrl,
-    includeSubdomains, setIncludeSubdomains,
-    maxSubdomains, setMaxSubdomains,
-    maxPages, setMaxPages,
-    preferSitemap, setPreferSitemap,
     iterationComments, setIterationComments,
     suggestions, setSuggestions,
     selectedSuggestions, setSelectedSuggestions,

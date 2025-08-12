@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Menu, Moon, Sun, UserCircle } from 'lucide-react';
+import { Menu, Moon, Sun, UserCircle, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import {
@@ -22,7 +22,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 export function AppHeader() {
-  const { isAuthenticated, login, logout } = useAuth();
+  const { isAuthenticated, login, logout, isAdmin } = useAuth();
   const { setTheme } = useTheme();
   const pathname = usePathname();
 
@@ -148,6 +148,13 @@ export function AppHeader() {
               <DropdownMenuSeparator />
               {isAuthenticated ? (
                 <>
+                  {isAdmin && (
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin" className="cursor-pointer flex items-center gap-2">
+                        <Shield className="h-4 w-4" /> Admin Panel
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem asChild>
                     <Link href="/settings" className="cursor-pointer">Settings</Link>
                   </DropdownMenuItem>
