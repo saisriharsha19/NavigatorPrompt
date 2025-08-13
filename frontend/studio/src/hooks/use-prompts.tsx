@@ -14,6 +14,9 @@ export type User = {
   full_name: string;
   is_admin: boolean;
   is_active: boolean;
+  is_student: boolean;
+  is_faculty: boolean;
+  is_staff: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -58,7 +61,6 @@ export type LibrarySubmission = {
     status: 'PENDING' | 'APPROVED' | 'REJECTED';
     submitted_at: string;
     admin_notes?: string;
-    user_notes?: string;
     user?: Partial<User>; 
 };
 
@@ -66,7 +68,7 @@ export type LibrarySubmission = {
 type PromptHistoryContextType = {
   prompts: Prompt[];
   isLoading: boolean;
-  deletePrompt: (id: string) => Promise<void>;
+  deletePrompt: (id: string, userId: string) => Promise<void>;
 };
 
 const PromptHistoryContext = createContext<PromptHistoryContextType | undefined>(undefined);
@@ -75,14 +77,14 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
-  const { isAuthenticated, userId, isAdmin } = useAuth();
+  const { user, token } = useAuth();
 
   useEffect(() => {
     const loadPrompts = async () => {
-      if (isAuthenticated && userId) {
+      if (user && token) {
         try {
           setIsLoading(true);
-          const initialPrompts = await getHistoryPromptsFromDB(userId);
+          const initialPrompts = await getHistoryPromptsFromDB(token);
           setPrompts(initialPrompts);
         } catch (error) {
           console.error('Failed to load prompts from history', error);
@@ -100,20 +102,20 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
       }
     };
     loadPrompts();
-  }, [isAuthenticated, userId, toast]);
+  }, [user, token, toast]);
 
 
-  const deletePrompt = useCallback(async (id: string) => {
-    if (!isAuthenticated || !userId) {
+  const deletePrompt = useCallback(async (id: string, promptUserId: string) => {
+    if (!user || !token) {
       toast({
         variant: 'destructive',
         title: 'Not Logged In',
-        description: 'You must be logged in to delete prompts from history.',
+        description: 'You must be logged in to delete prompts.',
       });
       return;
     }
     
-    if (!isAdmin) {
+    if (!user.is_admin) {
       toast({
         variant: 'destructive',
         title: 'Permission Denied',
@@ -123,7 +125,7 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      await deleteHistoryPromptFromDB(id, userId);
+      await deleteHistoryPromptFromDB(id, promptUserId, token);
       setPrompts(prev => prev.filter(p => p.id !== id));
       toast({
         title: 'Prompt Deleted',
@@ -136,7 +138,7 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
         description: error.message || 'An error occurred while deleting the prompt.',
       });
     }
-  }, [isAuthenticated, userId, toast, isAdmin]);
+  }, [user, token, toast]);
 
   return (
     <PromptHistoryContext.Provider value={{ prompts, deletePrompt, isLoading }}>
@@ -145,10 +147,17 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function usePromptHistory() {
+export function usePromptHistory(initialPrompts: Prompt[]) {
   const context = useContext(PromptHistoryContext);
   if (context === undefined) {
     throw new Error('usePromptHistory must be used within a PromptHistoryProvider');
   }
+  
+  // This allows the server-rendered prompts to be available on first load
+  // while still allowing the context to manage updates.
+  if (context.prompts.length === 0 && initialPrompts.length > 0 && context.isLoading) {
+      context.prompts = initialPrompts;
+  }
+  
   return context;
 }

@@ -24,6 +24,7 @@ import { ThumbsUp, ThumbsDown, Eye, FileClock } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { formatDistanceToNow } from 'date-fns';
+import { useAuth } from '@/hooks/use-auth';
 
 type ReviewAction = 'approve' | 'reject';
 type Status = 'PENDING' | 'APPROVED' | 'REJECTED';
@@ -48,6 +49,7 @@ export function AdminSubmissionsClient({
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
+  const { token } = useAuth();
 
   const [status, setStatus] = React.useState<Status>(initialStatus);
   const [selectedSubmission, setSelectedSubmission] = React.useState<LibrarySubmission | null>(null);
@@ -66,7 +68,8 @@ export function AdminSubmissionsClient({
   const handleStatusChange = (newStatus: string) => {
     const validStatus = newStatus as Status;
     setStatus(validStatus);
-    router.push(`${pathname}?status=${validStatus}`);
+    // Update URL without reloading the page, state change handles the render
+    router.push(`${pathname}?status=${validStatus}`, { scroll: false });
   };
 
   const openReviewDialog = (submission: LibrarySubmission) => {
@@ -76,11 +79,11 @@ export function AdminSubmissionsClient({
   };
 
   const handleReview = async (action: ReviewAction) => {
-    if (!selectedSubmission) return;
+    if (!selectedSubmission || !token) return;
 
     setIsSubmitting(true);
     try {
-      await reviewLibrarySubmission(selectedSubmission.id, action, reviewNotes);
+      await reviewLibrarySubmission(selectedSubmission.id, action, reviewNotes, token);
       toast({
         title: 'Success',
         description: `Submission has been ${action}d.`,
@@ -98,6 +101,11 @@ export function AdminSubmissionsClient({
       setIsSubmitting(false);
     }
   };
+  
+  React.useEffect(() => {
+    setStatus(initialStatus);
+  }, [initialStatus]);
+
 
   return (
     <TooltipProvider>
@@ -117,7 +125,7 @@ export function AdminSubmissionsClient({
                   <span className="font-semibold">Submitted by:</span> {selectedSubmission.user?.full_name || 'N/A'} ({selectedSubmission.user?.email || 'Unknown User'})
                 </p>
                 <p>
-                  <span className="font-semibold">User Notes:</span> {selectedSubmission.user_notes || 'N/A'}
+                  <span className="font-semibold">User Notes:</span> {selectedSubmission.submission_notes || 'N/A'}
                 </p>
               </div>
               <Textarea

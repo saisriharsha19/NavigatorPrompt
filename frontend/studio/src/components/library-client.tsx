@@ -98,9 +98,9 @@ const itemVariants = {
 };
 
 
-export function LibraryClient() {
-  const { libraryPrompts, toggleStar, isLoading, deleteLibraryPrompt } = useLibrary();
-  const { isAuthenticated, isAdmin } = useAuth();
+export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) {
+  const { libraryPrompts, toggleStar, isLoading, deleteLibraryPrompt } = useLibrary(initialPrompts);
+  const { user } = useAuth();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewingPrompt, setViewingPrompt] = useState<Prompt | null>(null);
@@ -260,7 +260,7 @@ export function LibraryClient() {
                                   variant="ghost" 
                                   className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground" 
                                   onClick={() => toggleStar(prompt.id)} 
-                                  disabled={!isAuthenticated}
+                                  disabled={!user}
                                   aria-label={prompt.isStarredByUser ? "Un-star this prompt" : "Star this prompt"}
                                 >
                                     <Star className={cn("h-4 w-4 transition-colors", prompt.isStarredByUser && "fill-yellow-400 text-yellow-400")} />
@@ -309,7 +309,7 @@ export function LibraryClient() {
                                 </TooltipContent>
                                 </Tooltip>
 
-                                {isAdmin && (
+                                {user?.is_admin && (
                                     <AlertDialog>
                                     <Tooltip>
                                         <TooltipTrigger asChild>
@@ -351,7 +351,7 @@ export function LibraryClient() {
                 xmlns="http://www.w3.org/2000/svg"
                 width="24"
                 height="24"
-                viewBox="0 0 24 24"
+                viewBox="0 0 24"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"

@@ -25,7 +25,7 @@ const ALLOWED_FILE_TYPES = [
 ];
 
 export function DocumentManager() {
-  const { isAuthenticated, login } = useAuth();
+  const { user } = useAuth();
   const { uploadedFiles, setUploadedFiles } = usePromptForge();
   const [isExtracting, setIsExtracting] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -92,9 +92,8 @@ export function DocumentManager() {
   };
 
   const handleFilesChange = async (selectedFiles: FileList | null) => {
-    if (!isAuthenticated) {
+    if (!user) {
       toast({ variant: 'destructive', title: 'Please sign in to use documents.' });
-      login();
       return;
     }
     if (!selectedFiles || selectedFiles.length === 0) return;
@@ -127,7 +126,7 @@ export function DocumentManager() {
     if (event.dataTransfer.files) {
       handleFilesChange(event.dataTransfer.files);
     }
-  }, [isAuthenticated, login, handleFilesChange]);
+  }, [user, handleFilesChange]);
 
   const handleDragOver = useCallback((event: React.DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
@@ -176,7 +175,7 @@ export function DocumentManager() {
               className={cn(
                 'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-12 text-center transition-colors',
                 isDragOver ? 'border-primary bg-accent dark:border-accent' : 'border-border hover:border-primary/50 dark:hover:border-accent',
-                !isAuthenticated && 'cursor-not-allowed opacity-60'
+                !user && 'cursor-not-allowed opacity-60'
               )}
             >
               <div className="rounded-full bg-muted p-3">
@@ -193,7 +192,7 @@ export function DocumentManager() {
               className="sr-only"
               onChange={(e) => handleFilesChange(e.target.files)}
               accept={ALLOWED_FILE_TYPES.join(',')}
-              disabled={!isAuthenticated || isExtracting}
+              disabled={!user || isExtracting}
               multiple
             />
           </motion.div>
@@ -235,7 +234,7 @@ export function DocumentManager() {
                 </ul>
               ) : (
                 <div className="flex h-16 items-center justify-center">
-                  <p className="text-sm text-muted-foreground">No document context applied.</p>
+                  <p className="text-sm text-muted-foreground">{!user ? 'Sign in to add documents.' : 'No document context applied.'}</p>
                 </div>
               )}
             </TooltipProvider>

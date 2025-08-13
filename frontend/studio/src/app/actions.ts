@@ -19,9 +19,6 @@ const getErrorMessage = (error: unknown): string => {
   return String(error);
 };
 
-// Mock token for demonstration purposes. In a real app, this would be a real JWT.
-const MOCK_AUTH_TOKEN = "mock-user-123-token";
-
 // --- Task-based API Calls ---
 
 export type TaskCreationResponse = {
@@ -29,15 +26,15 @@ export type TaskCreationResponse = {
   status_url: string;
 };
 
-export async function handleGenerateInitialPrompt(input: { user_needs: string }): Promise<TaskCreationResponse> {
+export async function handleGenerateInitialPrompt(input: { user_needs: string, token: string }): Promise<TaskCreationResponse> {
   try {
     const response = await fetch(`${BACKEND_URL}/prompts/generate`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${MOCK_AUTH_TOKEN}`,
+        'Authorization': `Bearer ${input.token}`,
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ user_needs: input.user_needs }),
     });
     if (!response.ok) {
       const errorData = await response.json();
@@ -50,15 +47,15 @@ export async function handleGenerateInitialPrompt(input: { user_needs: string })
   }
 }
 
-export async function handleEvaluatePrompt(input: { prompt: string; user_needs: string; }): Promise<TaskCreationResponse> {
+export async function handleEvaluatePrompt(input: { prompt: string; user_needs: string; token: string }): Promise<TaskCreationResponse> {
   try {
     const response = await fetch(`${BACKEND_URL}/prompts/evaluate`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${MOCK_AUTH_TOKEN}`,
+        'Authorization': `Bearer ${input.token}`,
        },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ prompt: input.prompt, user_needs: input.user_needs }),
     });
     if (!response.ok) {
       const errorData = await response.json();
@@ -71,15 +68,15 @@ export async function handleEvaluatePrompt(input: { prompt: string; user_needs: 
   }
 }
 
-export async function handleGetPromptSuggestions(input: { current_prompt: string; user_comments?: string }): Promise<TaskCreationResponse> {
+export async function handleGetPromptSuggestions(input: { current_prompt: string; user_comments?: string; token: string }): Promise<TaskCreationResponse> {
   try {
     const response = await fetch(`${BACKEND_URL}/prompts/suggest-improvements`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${MOCK_AUTH_TOKEN}`,
+        'Authorization': `Bearer ${input.token}`,
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ current_prompt: input.current_prompt, user_comments: input.user_comments }),
     });
     if (!response.ok) {
       const errorData = await response.json();
@@ -103,10 +100,10 @@ export type TaskStatusResponse = {
   result?: GenerateInitialPromptOutput | EvaluateAndIteratePromptOutput | GeneratePromptSuggestionsOutput | GeneratePromptMetadataOutput;
 };
 
-export async function getTaskResult(status_url: string): Promise<TaskStatusResponse> {
+export async function getTaskResult(status_url: string, token: string): Promise<TaskStatusResponse> {
   try {
     const response = await fetch(`${BACKEND_URL}${status_url}`, {
-        headers: { 'Authorization': `Bearer ${MOCK_AUTH_TOKEN}` },
+        headers: { 'Authorization': `Bearer ${token}` },
     });
     if (!response.ok) {
       const errorData = await response.json();
@@ -128,14 +125,14 @@ export async function getTaskResult(status_url: string): Promise<TaskStatusRespo
 
 // --- Database Actions ---
 
-export async function getHistoryPromptsFromDB(userId: string): Promise<Prompt[]> {
-  if (!userId) return [];
+export async function getHistoryPromptsFromDB(token: string): Promise<Prompt[]> {
+  if (!token) return [];
   try {
     const response = await fetch(`${BACKEND_URL}/user/prompts`, {
         method: 'GET',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${MOCK_AUTH_TOKEN}`,
+            'Authorization': `Bearer ${token}`,
         },
         cache: 'no-store',
     });
@@ -148,7 +145,7 @@ export async function getHistoryPromptsFromDB(userId: string): Promise<Prompt[]>
     const rawPrompts: any[] = await response.json();
     const prompts: Prompt[] = rawPrompts.map(p => ({
       id: p.id,
-      userId: p.user_id,
+      userId: p.user_id, // This field is part of the UserPromptResponse model from backend
       text: p.prompt_text,
       createdAt: p.created_at,
     }));
@@ -159,12 +156,9 @@ export async function getHistoryPromptsFromDB(userId: string): Promise<Prompt[]>
   }
 }
 
-// History is now read-only for users. Deletion is an admin action.
-// The ADMIN_KEY should be stored securely and not exposed on the client-side.
-// This function assumes an admin context if an admin key is available.
-export async function deleteHistoryPromptFromDB(id: string, userId: string): Promise<{ success: boolean }> {
-  if (!ADMIN_KEY) {
-      throw new Error("Admin action required, but no admin key is configured.");
+export async function deleteHistoryPromptFromDB(id: string, userId: string, token: string): Promise<{ success: boolean }> {
+  if (!token) {
+      throw new Error("Admin action requires authentication.");
   }
   if (!userId) throw new Error('User ID is required to delete a prompt.');
 
@@ -172,7 +166,7 @@ export async function deleteHistoryPromptFromDB(id: string, userId: string): Pro
     const response = await fetch(`${BACKEND_URL}/admin/users/${userId}/prompts/${id}`, {
         method: 'DELETE',
         headers: {
-            'X-Admin-Key': ADMIN_KEY
+            'Authorization': `Bearer ${token}`
         },
     });
 
@@ -197,7 +191,7 @@ export async function deleteHistoryPromptFromDB(id: string, userId: string): Pro
 
 
 // --- Library Actions (API only) ---
-export async function getLibraryPromptsFromDB(userId: string | null): Promise<Prompt[]> {
+export async function getLibraryPromptsFromDB(userId?: string): Promise<Prompt[]> {
   try {
     const url = new URL(`${BACKEND_URL}/library/prompts`);
     if (userId) {
@@ -226,15 +220,15 @@ export async function getLibraryPromptsFromDB(userId: string | null): Promise<Pr
   }
 }
 
-export async function submitPromptToLibrary(request: { prompt_text: string, submission_notes?: string }): Promise<LibrarySubmission> {
+export async function submitPromptToLibrary(request: { prompt_text: string, submission_notes?: string, token: string }): Promise<LibrarySubmission> {
     try {
       const response = await fetch(`${BACKEND_URL}/user/library/submit`, {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${MOCK_AUTH_TOKEN}`,
+            'Authorization': `Bearer ${request.token}`,
           },
-          body: JSON.stringify(request),
+          body: JSON.stringify({prompt_text: request.prompt_text, submission_notes: request.submission_notes}),
       });
   
       if (!response.ok) {
@@ -253,16 +247,16 @@ export async function submitPromptToLibrary(request: { prompt_text: string, subm
 }
 
 
-export async function deleteLibraryPromptFromDB(promptId: string): Promise<{ success: boolean }> {
-  if (!ADMIN_KEY) {
-      throw new Error("Admin action required, but no admin key is configured.");
+export async function deleteLibraryPromptFromDB(promptId: string, token: string): Promise<{ success: boolean }> {
+   if (!token) {
+      throw new Error("Admin action requires authentication.");
   }
 
   try {
     const response = await fetch(`${BACKEND_URL}/library/prompts/${promptId}`, {
         method: 'DELETE',
         headers: {
-            'X-Admin-Key': ADMIN_KEY
+            'Authorization': `Bearer ${token}`
         },
     });
 
@@ -284,7 +278,7 @@ export async function deleteLibraryPromptFromDB(promptId: string): Promise<{ suc
   }
 }
 
-export async function toggleStarForPrompt(promptId: string, request: { user_id: string }): Promise<{ success: boolean, action: 'starred' | 'unstarred' }> {
+export async function toggleStarForPrompt(promptId: string, request: { user_id: string, token: string }): Promise<{ success: boolean, action: 'starred' | 'unstarred' }> {
   if (!request.user_id) throw new Error('User not authenticated.');
 
   try {
@@ -292,8 +286,9 @@ export async function toggleStarForPrompt(promptId: string, request: { user_id: 
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${request.token}`,
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify({user_id: request.user_id}),
     });
 
     if (!response.ok) {
@@ -317,16 +312,16 @@ export async function toggleStarForPrompt(promptId: string, request: { user_id: 
 
 // --- Admin Actions ---
 
-export async function getAdminStats(): Promise<PlatformStats> {
+export async function getAdminStats(token: string): Promise<PlatformStats> {
   try {
     const response = await fetch(`${BACKEND_URL}/admin/stats`, {
-      headers: { 'X-Admin-Key': ADMIN_KEY || '' },
+      headers: { 'Authorization': `Bearer ${token}` },
       cache: 'no-store',
     });
     if (!response.ok) {
-      const errorBody = await response.text();
-      console.error('Failed to fetch admin stats, server responded with:', errorBody);
-      throw new Error(`Failed to fetch admin stats. Status: ${response.status}`);
+      const errorBody = await response.json().catch(() => ({ detail: `Failed to fetch admin stats. Status: ${response.status}`}));
+      console.error('Failed to fetch admin stats, server responded with:', errorBody.detail);
+      throw new Error(errorBody.detail);
     }
     return await response.json();
   } catch (error) {
@@ -341,11 +336,11 @@ export async function getAdminStats(): Promise<PlatformStats> {
   }
 }
 
-export async function getAdminUsers(): Promise<User[]> {
-  if (!ADMIN_KEY) throw new Error("Admin action required.");
+export async function getAdminUsers(token: string): Promise<User[]> {
+  if (!token) throw new Error("Admin action required.");
   try {
     const response = await fetch(`${BACKEND_URL}/admin/users`, {
-      headers: { 'X-Admin-Key': ADMIN_KEY },
+      headers: { 'Authorization': `Bearer ${token}` },
       cache: 'no-store',
     });
     if (!response.ok) throw new Error('Failed to fetch users.');
@@ -360,28 +355,26 @@ export async function getAdminUsers(): Promise<User[]> {
   }
 }
 
-export async function getAdminLibrarySubmissions(status: 'PENDING' | 'APPROVED' | 'REJECTED'): Promise<LibrarySubmission[]> {
-  if (!ADMIN_KEY) throw new Error("Admin action required.");
+export async function getAdminLibrarySubmissions(status: 'PENDING' | 'APPROVED' | 'REJECTED', token: string): Promise<LibrarySubmission[]> {
+  if (!token) throw new Error("Admin action required.");
   try {
     const response = await fetch(`${BACKEND_URL}/admin/library/submissions?status=${status}`, {
-      headers: { 'X-Admin-Key': ADMIN_KEY },
+      headers: { 'Authorization': `Bearer ${token}` },
       cache: 'no-store',
     });
     if (!response.ok) throw new Error('Failed to fetch library submissions.');
     
-    // Map the raw response to the LibrarySubmission type
     const submissions: LibrarySubmission[] = (await response.json()).map((s: any) => ({
       id: s.id,
       prompt_text: s.prompt_text,
       user_id: s.user_id,
       status: s.status,
-      submitted_at: s.created_at, // Map created_at to submitted_at
+      submitted_at: s.created_at,
       admin_notes: s.admin_notes,
       user: {
         id: s.user_id,
         email: s.user_email || 'Unknown Email',
         full_name: s.user?.full_name || 'Unknown User',
-        // Provide default values for other User fields
         username: s.user?.username || '',
         is_admin: s.user?.is_admin || false,
         is_active: s.user?.is_active || true,
@@ -396,14 +389,14 @@ export async function getAdminLibrarySubmissions(status: 'PENDING' | 'APPROVED' 
   }
 }
 
-export async function reviewLibrarySubmission(submissionId: string, action: 'approve' | 'reject', adminNotes?: string): Promise<{ success: boolean }> {
-  if (!ADMIN_KEY) throw new Error("Admin action required.");
+export async function reviewLibrarySubmission(submissionId: string, action: 'approve' | 'reject', adminNotes: string | undefined, token: string): Promise<{ success: boolean }> {
+  if (!token) throw new Error("Admin action required.");
   try {
     const response = await fetch(`${BACKEND_URL}/admin/library/submissions/${submissionId}/review`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Admin-Key': ADMIN_KEY,
+        'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({ action, admin_notes: adminNotes }),
     });

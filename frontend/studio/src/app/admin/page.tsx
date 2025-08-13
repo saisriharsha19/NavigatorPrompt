@@ -2,9 +2,14 @@
 import { getAdminStats } from "@/app/actions";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Users, BookText, Library, FileClock } from "lucide-react";
+import { cookies } from 'next/headers';
 
 export default async function AdminDashboardPage() {
-    const stats = await getAdminStats();
+    const cookieStore = cookies();
+    const token = cookieStore.get('auth_token')?.value;
+
+    // We can assume if no token, stats will return the default empty object.
+    const stats = await getAdminStats(token || '');
 
     return (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">

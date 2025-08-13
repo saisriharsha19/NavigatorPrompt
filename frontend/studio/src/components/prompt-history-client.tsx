@@ -85,9 +85,9 @@ const itemVariants = {
   },
 };
 
-export function PromptHistoryClient() {
-  const { prompts, deletePrompt, isLoading } = usePromptHistory();
-  const { isAuthenticated, login, isAdmin } = useAuth();
+export function PromptHistoryClient({ initialPrompts }: { initialPrompts: Prompt[] }) {
+  const { prompts, deletePrompt, isLoading } = usePromptHistory(initialPrompts);
+  const { user } = useAuth();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewingPrompt, setViewingPrompt] = useState<Prompt | null>(null);
@@ -111,7 +111,7 @@ export function PromptHistoryClient() {
     return words.length > 8 ? `${title}...` : title;
   };
   
-  if (!isAuthenticated) {
+  if (!user) {
     return (
       <div className="container mx-auto max-w-7xl py-8 px-4 sm:px-6 lg:px-8">
         <div className="flex h-[60vh] flex-col items-center justify-center rounded-lg border-2 border-dashed bg-muted/50 p-12 text-center">
@@ -120,10 +120,9 @@ export function PromptHistoryClient() {
             <p className="mt-2 text-muted-foreground">
               Sign in to view, save, and manage your personal prompt history.
             </p>
-            <Button onClick={login} className="mt-6">
-                <UserCircle className="mr-2 h-5 w-5" />
-                Sign In
-            </Button>
+            <p className="mt-4 text-sm text-muted-foreground">
+              Use the Sign In button in the header.
+            </p>
         </div>
       </div>
     )
@@ -209,7 +208,7 @@ export function PromptHistoryClient() {
         </div>
 
         <ScrollArea className="h-full">
-          {isLoading ? (
+          {isLoading && prompts.length === 0 ? (
             <ul className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {Array.from({ length: 8 }).map((_, i) => <li key={i}><PromptCardSkeleton /></li>)}
             </ul>
@@ -280,7 +279,7 @@ export function PromptHistoryClient() {
                         </TooltipContent>
                       </Tooltip>
 
-                      {isAdmin && (
+                      {user?.is_admin && (
                         <AlertDialog>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -303,7 +302,7 @@ export function PromptHistoryClient() {
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                               <AlertDialogCancel className={cn(buttonVariants({variant: 'default'}))}>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => deletePrompt(prompt.id)} className={cn(buttonVariants({variant: 'destructive'}))}>
+                              <AlertDialogAction onClick={() => deletePrompt(prompt.id, prompt.userId)} className={cn(buttonVariants({variant: 'destructive'}))}>
                                 Delete
                               </AlertDialogAction>
                             </AlertDialogFooter>

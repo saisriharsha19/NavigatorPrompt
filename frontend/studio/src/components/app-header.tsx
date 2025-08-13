@@ -2,7 +2,8 @@
 'use client';
 
 import Link from 'next/link';
-import { Menu, Moon, Sun, UserCircle, Shield } from 'lucide-react';
+import * as React from 'react';
+import { Menu, Moon, Sun, UserCircle, Shield, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import {
@@ -20,9 +21,64 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+
+function MockLoginDialog() {
+  const { login, isAuthLoading } = useAuth();
+  const [email, setEmail] = React.useState('student@ufl.edu');
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    login(email);
+  };
+
+  return (
+    <DialogContent className="sm:max-w-[425px]">
+      <form onSubmit={handleLogin}>
+        <DialogHeader>
+          <DialogTitle>Mock Sign In</DialogTitle>
+          <DialogDescription>
+            Enter an email to simulate logging in as different user types. Use `admin@ufl.edu` for admin access.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-4">
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="email" className="text-right">
+              Email
+            </Label>
+            <Input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="col-span-3"
+              placeholder="e.g., student@ufl.edu"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="submit" disabled={isAuthLoading}>
+            {isAuthLoading ? 'Signing In...' : 'Sign In'}
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  );
+}
+
 
 export function AppHeader() {
-  const { isAuthenticated, login, logout, isAdmin } = useAuth();
+  const { user, logout } = useAuth();
   const { setTheme } = useTheme();
   const pathname = usePathname();
 
@@ -129,43 +185,51 @@ export function AppHeader() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="rounded-full">
-                    <UserCircle className="h-6 w-6" />
-                    <span className="sr-only">Toggle user menu</span>
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>My Account</p>
-              </TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>My Account</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {isAuthenticated ? (
-                <>
-                  {isAdmin && (
+          <Dialog>
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="rounded-full">
+                      <UserCircle className="h-6 w-6" />
+                      <span className="sr-only">Toggle user menu</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>My Account</p>
+                </TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>{user ? user.name : 'My Account'}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {user ? (
+                  <>
+                    {user.is_admin && (
+                      <DropdownMenuItem asChild>
+                        <Link href="/admin" className="cursor-pointer flex items-center gap-2">
+                          <Shield className="h-4 w-4" /> Admin Panel
+                        </Link>
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem asChild>
-                      <Link href="/admin" className="cursor-pointer flex items-center gap-2">
-                        <Shield className="h-4 w-4" /> Admin Panel
-                      </Link>
+                      <Link href="/settings" className="cursor-pointer">Settings</Link>
                     </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem asChild>
-                    <Link href="/settings" className="cursor-pointer">Settings</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => logout()} className="cursor-pointer">Sign Out</DropdownMenuItem>
-                </>
-              ) : (
-                <DropdownMenuItem onClick={() => login()} className="cursor-pointer">Sign In</DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => logout()} className="cursor-pointer">Sign Out</DropdownMenuItem>
+                  </>
+                ) : (
+                   <DialogTrigger asChild>
+                      <DropdownMenuItem className="cursor-pointer">
+                        <LogIn className="mr-2 h-4 w-4" />
+                        Sign In
+                      </DropdownMenuItem>
+                    </DialogTrigger>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <MockLoginDialog />
+          </Dialog>
         </div>
       </header>
     </TooltipProvider>
