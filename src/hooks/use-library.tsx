@@ -18,19 +18,19 @@ type LibraryContextType = {
 
 const LibraryContext = createContext<LibraryContextType | undefined>(undefined);
 
-const POLLING_INTERVAL = 15000; // Poll every 15 seconds
+const POLLING_INTERVAL = 30000; // Poll every 30 seconds
 
 export function LibraryProvider({ children }: { children: ReactNode }) {
   const [libraryPrompts, setLibraryPrompts] = useState<Prompt[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
-  const { isAuthenticated, userId, isAdmin } = useAuth();
+  const { user, token } = useAuth();
 
   const loadPrompts = useCallback(async (isInitialLoad = false) => {
     if (isInitialLoad) setIsLoading(true);
 
     try {
-      const initialPrompts = await getLibraryPromptsFromDB(userId);
+      const initialPrompts = await getLibraryPromptsFromDB(user?.id);
       setLibraryPrompts(initialPrompts);
     } catch (error) {
       console.error('Failed to load prompts from library', error);
@@ -42,7 +42,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     } finally {
       if (isInitialLoad) setIsLoading(false);
     }
-  }, [toast, userId]);
+  }, [toast, user?.id]);
 
 
   useEffect(() => {
@@ -56,7 +56,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   }, [loadPrompts]);
 
   const addLibrarySubmission = useCallback(async (text: string) => {
-    if (!isAuthenticated || !userId) {
+    if (!user || !token) {
       toast({
         variant: 'destructive',
         title: 'Authentication Required',
@@ -68,7 +68,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     if (!text.trim()) return;
     
     try {
-      await submitPromptToLibrary({ prompt_text: text });
+      await submitPromptToLibrary({ prompt_text: text, token });
       toast({
         title: 'Prompt Submitted to Library',
         description: 'Your prompt has been sent for admin approval.',
@@ -80,10 +80,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         description: error.message || 'An error occurred while submitting the prompt.',
       });
     }
-  }, [isAuthenticated, userId, toast]);
+  }, [user, token, toast]);
 
   const deleteLibraryPrompt = useCallback(async (id: string) => {
-    if (!isAuthenticated || !userId || !isAdmin) {
+    if (!user?.is_admin || !token) {
       toast({
         variant: 'destructive',
         title: 'Permission Denied',
@@ -96,7 +96,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     setLibraryPrompts(prev => prev.filter(p => p.id !== id));
 
     try {
-      await deleteLibraryPromptFromDB(id);
+      await deleteLibraryPromptFromDB(id, token);
       toast({
         title: 'Prompt Deleted',
         description: 'The prompt has been removed from the library.',
@@ -109,11 +109,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         description: error.message || 'An error occurred while deleting the prompt.',
       });
     }
-  }, [isAuthenticated, userId, isAdmin, libraryPrompts, toast]);
+  }, [user, token, libraryPrompts, toast]);
 
 
   const toggleStar = useCallback(async (promptId: string) => {
-    if (!isAuthenticated || !userId) {
+    if (!user || !token) {
         toast({ variant: 'destructive', title: 'Please sign in to star prompts.' });
         return;
     }
@@ -138,7 +138,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     );
 
     try {
-        const result = await toggleStarForPrompt(promptId, { user_id: userId });
+        const result = await toggleStarForPrompt(promptId, { user_id: user.id, token });
         if (result.action !== optimisticAction) {
            await loadPrompts(false); 
         }
@@ -150,7 +150,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         });
         setLibraryPrompts(originalPrompts);
     }
-  }, [isAuthenticated, userId, toast, libraryPrompts, loadPrompts]);
+  }, [user, token, toast, libraryPrompts, loadPrompts]);
 
   return (
     <LibraryContext.Provider value={{ libraryPrompts, addLibrarySubmission, toggleStar, isLoading, deleteLibraryPrompt }}>
@@ -159,12 +159,16 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useLibrary() {
+export function useLibrary(initialPrompts: Prompt[] = []) {
   const context = useContext(LibraryContext);
   if (context === undefined) {
     throw new Error('useLibrary must be used within a LibraryProvider');
   }
+  // This allows the server-rendered prompts to be available on first load
+  // while still allowing the context to manage updates.
+  if (context.libraryPrompts.length === 0 && initialPrompts.length > 0 && context.isLoading) {
+    context.libraryPrompts = initialPrompts;
+  }
+
   return context;
 }
-
-    

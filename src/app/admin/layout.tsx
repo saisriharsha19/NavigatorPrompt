@@ -14,7 +14,7 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isAdmin, login } = useAuth();
+  const { user, login } = useAuth();
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background">
@@ -27,7 +27,7 @@ export default function AdminLayout({
                     Manage users, review submissions, and view platform analytics.
                 </p>
             </div>
-            {isAuthenticated && isAdmin ? (
+            {user && user.is_admin ? (
               <div className="grid grid-cols-1 gap-8 md:grid-cols-[240px_1fr] md:gap-10">
                 <aside className="md:mb-0">
                     <AdminNav />
@@ -41,13 +41,12 @@ export default function AdminLayout({
                 <Shield className="h-12 w-12 text-destructive sm:h-16 sm:w-16" />
                 <h2 className="mt-6 text-xl font-semibold tracking-tight sm:text-2xl">Access Denied</h2>
                 <p className="mt-2 text-muted-foreground">
-                    You do not have permission to view this page. Please contact an administrator if you believe this is an error.
+                    You do not have permission to view this page. Please sign in with an admin account.
                 </p>
-                {!isAuthenticated && (
-                  <Button onClick={login} className="mt-6">
-                    <UserCircle className="mr-2 h-4 w-4" />
-                    Sign In
-                  </Button>
+                {!user && (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    You must be signed in to access this section.
+                  </p>
                 )}
             </div>
             )}

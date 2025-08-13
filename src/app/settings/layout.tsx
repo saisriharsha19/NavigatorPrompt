@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useAuth } from '@/hooks/use-auth';
@@ -13,7 +14,7 @@ export default function SettingsLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, login } = useAuth();
+  const { user, login } = useAuth();
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background">
@@ -26,7 +27,7 @@ export default function SettingsLayout({
                     Manage your account settings and preferences.
                 </p>
             </div>
-            {isAuthenticated ? (
+            {user ? (
               <div className="grid grid-cols-1 gap-8 md:grid-cols-[240px_1fr] md:gap-10">
                 <aside className="md:mb-0">
                     <SettingsNav />
@@ -42,9 +43,9 @@ export default function SettingsLayout({
                 <p className="mt-2 text-muted-foreground">
                 Sign in to manage your profile, appearance, and account settings.
                 </p>
-                <Button onClick={login} className="mt-6">
-                  Sign In
-                </Button>
+                <p className="mt-4 text-sm text-muted-foreground">
+                    Use the Sign In button in the header.
+                </p>
             </div>
             )}
         </div>
