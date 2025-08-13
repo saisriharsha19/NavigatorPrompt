@@ -22,7 +22,7 @@ type AuthContextType = {
   user: User | null;
   token: string | null;
   isAuthLoading: boolean;
-  login: (email: string) => Promise<void>;
+  login: (email: string) => Promise<boolean>;
   logout: () => void;
 };
 
@@ -37,16 +37,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkAuthStatus = React.useCallback(async () => {
     setIsAuthLoading(true);
-    const storedToken = localStorage.getItem('auth_token');
-    const storedUser = localStorage.getItem('auth_user');
+    try {
+        const storedToken = localStorage.getItem('auth_token');
+        const storedUser = localStorage.getItem('auth_user');
 
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-      // Optionally, you could add a call here to a `/auth/session` endpoint
-      // to verify the token with the backend on initial load.
+        if (storedToken && storedUser) {
+            setToken(storedToken);
+            setUser(JSON.parse(storedUser));
+        }
+    } catch (error) {
+        console.error("Failed to parse auth data from storage", error);
+        // Clear corrupted data
+        localStorage.removeItem('auth_user');
+        localStorage.removeItem('auth_token');
+        document.cookie = 'auth_token=; path=/; max-age=0;';
+        document.cookie = 'auth_token_payload=; path=/; max-age=0;';
+    } finally {
+        setIsAuthLoading(false);
     }
-    setIsAuthLoading(false);
   }, []);
 
   React.useEffect(() => {
@@ -56,51 +64,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string) => {
     setIsAuthLoading(true);
     try {
-      const response = await fetch(`${BACKEND_URL}/auth/mock/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
+        if (!BACKEND_URL) {
+            toast({
+                variant: 'destructive',
+                title: 'Configuration Error',
+                description: 'The backend service URL is not configured.',
+            });
+            return false;
+        }
+        
+        const response = await fetch(`${BACKEND_URL}/auth/mock/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to sign in.');
-      }
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to sign in.');
+        }
 
-      const data = await response.json();
-      
-      setUser(data.user);
-      setToken(data.access_token);
-      localStorage.setItem('auth_user', JSON.stringify(data.user));
-      localStorage.setItem('auth_token', data.access_token);
-      
-      // Also store user object as payload for server components
-      document.cookie = `auth_token=${data.access_token}; path=/; max-age=86400; samesite=lax`;
-      document.cookie = `auth_token_payload=${JSON.stringify(data.user)}; path=/; max-age=86400; samesite=lax`;
+        const data = await response.json();
+        
+        const userData: User = data.user;
 
-      toast({
-        title: 'Signed In',
-        description: `Welcome, ${data.user.name}!`,
-      });
+        setUser(userData);
+        setToken(data.access_token);
+        localStorage.setItem('auth_user', JSON.stringify(userData));
+        localStorage.setItem('auth_token', data.access_token);
+        
+        const cookieOptions = `path=/; max-age=86400; samesite=lax`;
+        document.cookie = `auth_token=${data.access_token}; ${cookieOptions}`;
+        document.cookie = `auth_token_payload=${encodeURIComponent(JSON.stringify(userData))}; ${cookieOptions}`;
 
-      // Refresh the page to make sure server components get the new cookie
-      router.refresh();
+        toast({
+            title: 'Signed In',
+            description: `Welcome, ${userData.name}!`,
+        });
+
+        router.push('/');
+        router.refresh();
+        return true;
 
     } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Sign In Failed',
-        description: error.message,
-      });
-      setUser(null);
-      setToken(null);
-      localStorage.removeItem('auth_user');
-      localStorage.removeItem('auth_token');
-      document.cookie = 'auth_token=; path=/; max-age=0;';
-      document.cookie = 'auth_token_payload=; path=/; max-age=0;';
-
+        toast({
+            variant: 'destructive',
+            title: 'Sign In Failed',
+            description: error.message,
+        });
+        setUser(null);
+        setToken(null);
+        localStorage.removeItem('auth_user');
+        localStorage.removeItem('auth_token');
+        document.cookie = 'auth_token=; path=/; max-age=0;';
+        document.cookie = 'auth_token_payload=; path=/; max-age=0;';
+        return false;
     } finally {
-      setIsAuthLoading(false);
+        setIsAuthLoading(false);
     }
   };
 

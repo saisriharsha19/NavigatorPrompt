@@ -131,54 +131,39 @@ def analyze_submission_task(submission_id: str):
             
             headers = {"Authorization": f"Bearer {settings.API_KEY}", "Content-Type": "application/json"}
             payload = {"model": settings.MODEL_NAME, "messages": [{"role": "user", "content": formatted_prompt}]}
+
             async with httpx.AsyncClient(timeout=300.0) as client:
                 response = await client.post(settings.BASE_URL, json=payload, headers=headers)
                 response.raise_for_status()
-            llm_content = response.json()["choices"][0]["message"]["content"]
+
+            response_data = response.json()
+            llm_content = response_data["choices"][0]["message"]["content"]
             cleaned_content = extract_json_from_response(llm_content)
-            result_json = json.loads(cleaned_content)
-
-            quality = result_json.get("qualityIndicators", {})
-            category = result_json.get("categoryAnalysis", {})
-            raw_pg = quality.get("professional_grade", False)
-            professional_grade_bool = str(raw_pg).lower() in ['true', '1']
-
-            new_analysis = PromptAnalysis(
-                task_id=task_id, summary=result_json.get("summary"), tags=result_json.get("tags"),
-                clarity=quality.get("clarity"), bias_risk=quality.get("bias_risk"),
-                safety_level=quality.get("safety_level"), completeness=quality.get("completeness"),
-                professional_grade=professional_grade_bool,
-                primary_domain=category.get("primary_domain"), main_purpose=category.get("main_purpose"),
-                target_audience=category.get("target_audience"), complexity_level=category.get("complexity_level")
-            )
-            session.add(new_analysis)
+            analysis_json = json.loads(cleaned_content)
             
-            # Manage user prompt history
-            if task.user_id:
-                await manage_user_prompt_history(
-                    str(task.user_id), 
-                    request_data.get("prompt_text", ""), 
-                    "analysis", 
-                    session
-                )
+            # Save analysis results to submission
+            submission.summary = analysis_json.get("summary")
+            submission.tags = analysis_json.get("tags")
             
             task.status = "SUCCESS"
             task.completed_at = datetime.utcnow()
             await session.commit()
-            logger.info(f"Task {task_id} completed successfully.")
+            logger.info(f"Submission {submission_id} analyzed successfully.")
+
         except Exception as e:
-            logger.error(f"Error in task {task_id}: {e}", exc_info=True)
+            logger.error(f"Error analyzing submission {submission_id}: {e}", exc_info=True)
             await session.rollback()
-            async with AsyncSessionLocal() as error_session:
-                 task_to_update = await error_session.get(Task, task_id)
-                 if task_to_update:
-                    task_to_update.status = "FAILURE"
-                    task_to_update.error_message = str(e)
-                    task_to_update.completed_at = datetime.utcnow()
-                    await error_session.commit()
+            # Update task status if it exists
+            if 'task' in locals():
+                task.status = "FAILURE"
+                task.error_message = str(e)
+                task.completed_at = datetime.utcnow()
+                await session.commit()
         finally:
             await session.close()
+
     asyncio.run(run_task())
+
 
 @celery_app.task(name="tasks.create_initial_prompt")
 def create_initial_prompt_task(task_id: str, request_data: dict):
@@ -433,12 +418,12 @@ def analyze_and_tag_task(task_id: str, request_data: dict):
             logger.error(f"Error in task {task_id}: {e}", exc_info=True)
             await session.rollback()
             async with AsyncSessionLocal() as error_session:
-                task_to_update = await error_session.get(Task, task_id)
-                if task_to_update:
+                 task_to_update = await error_session.get(Task, task_id)
+                 if task_to_update:
                     task_to_update.status = "FAILURE"
                     task_to_update.error_message = str(e)
                     task_to_update.completed_at = datetime.utcnow()
-            await error_session.commit()
+                    await error_session.commit()
         finally:
             await session.close()
     asyncio.run(run_task())

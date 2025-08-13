@@ -5,7 +5,7 @@ import { cookies } from 'next/headers';
 
 
 export default async function AdminUsersPage() {
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     const token = cookieStore.get('auth_token')?.value;
 
     if (!token) {

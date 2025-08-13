@@ -2,7 +2,8 @@
 'use client';
 
 import type { EvaluateAndIteratePromptOutput } from '@/ai/flows/evaluate-and-iterate-prompt';
-import { createContext, useContext, useState, ReactNode, Dispatch, SetStateAction } from 'react';
+import { createContext, useContext, useState, ReactNode, Dispatch, SetStateAction, useEffect, useCallback } from 'react';
+import { useAuth } from './use-auth';
 
 type UploadedFile = {
   id: string;
@@ -37,11 +38,13 @@ type PromptForgeContextType = {
   setProcessingState: Dispatch<SetStateAction<ProcessingState>>;
   taskStatusUrl: string | null;
   setTaskStatusUrl: Dispatch<SetStateAction<string | null>>;
+  resetForge: () => void;
 };
 
 const PromptForgeContext = createContext<PromptForgeContextType | undefined>(undefined);
 
 export function PromptForgeProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [userNeeds, setUserNeeds] = useState('');
   const [currentPrompt, setCurrentPrompt] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -57,6 +60,26 @@ export function PromptForgeProvider({ children }: { children: ReactNode }) {
   });
   const [taskStatusUrl, setTaskStatusUrl] = useState<string | null>(null);
 
+  const resetForge = useCallback(() => {
+    setUserNeeds('');
+    setCurrentPrompt('');
+    setUploadedFiles([]);
+    setIterationComments('');
+    setSuggestions([]);
+    setSelectedSuggestions([]);
+    setEvaluationResult(null);
+    setProcessingState({ activeAction: null, statusText: '' });
+    setTaskStatusUrl(null);
+  }, []);
+
+  useEffect(() => {
+    // If the user logs out, reset the state of the forge.
+    if (!user) {
+      resetForge();
+    }
+  }, [user, resetForge]);
+
+
   const value = {
     userNeeds, setUserNeeds,
     currentPrompt, setCurrentPrompt,
@@ -68,6 +91,7 @@ export function PromptForgeProvider({ children }: { children: ReactNode }) {
     // Provide task state to context
     processingState, setProcessingState,
     taskStatusUrl, setTaskStatusUrl,
+    resetForge,
   };
   
   return (

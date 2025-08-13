@@ -10,7 +10,6 @@ import { revalidatePath } from 'next/cache';
 import type { GeneratePromptMetadataOutput } from '@/ai/flows/generate-prompt-tags';
 
 const BACKEND_URL = process.env.PYTHON_BACKEND_URL || 'http://localhost:8000';
-const ADMIN_KEY = process.env.ADMIN_KEY;
 
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
@@ -313,6 +312,15 @@ export async function toggleStarForPrompt(promptId: string, request: { user_id: 
 // --- Admin Actions ---
 
 export async function getAdminStats(token: string): Promise<PlatformStats> {
+  if (!token) {
+    // Return a default/empty stats object on error to prevent crashing the page.
+    return {
+      users: { total: 0, active: 0, admins: 0 },
+      prompts: { user_prompts: 0, library_prompts: 0 },
+      submissions: { pending: 0 },
+      tasks: { total: 0, successful: 0, success_rate: 0 },
+    };
+  }
   try {
     const response = await fetch(`${BACKEND_URL}/admin/stats`, {
       headers: { 'Authorization': `Bearer ${token}` },
@@ -337,7 +345,7 @@ export async function getAdminStats(token: string): Promise<PlatformStats> {
 }
 
 export async function getAdminUsers(token: string): Promise<User[]> {
-  if (!token) throw new Error("Admin action required.");
+  if (!token) throw new Error("Admin action requires authentication.");
   try {
     const response = await fetch(`${BACKEND_URL}/admin/users`, {
       headers: { 'Authorization': `Bearer ${token}` },
@@ -356,7 +364,7 @@ export async function getAdminUsers(token: string): Promise<User[]> {
 }
 
 export async function getAdminLibrarySubmissions(status: 'PENDING' | 'APPROVED' | 'REJECTED', token: string): Promise<LibrarySubmission[]> {
-  if (!token) throw new Error("Admin action required.");
+  if (!token) throw new Error("Admin action requires authentication.");
   try {
     const response = await fetch(`${BACKEND_URL}/admin/library/submissions?status=${status}`, {
       headers: { 'Authorization': `Bearer ${token}` },
@@ -390,7 +398,7 @@ export async function getAdminLibrarySubmissions(status: 'PENDING' | 'APPROVED' 
 }
 
 export async function reviewLibrarySubmission(submissionId: string, action: 'approve' | 'reject', adminNotes: string | undefined, token: string): Promise<{ success: boolean }> {
-  if (!token) throw new Error("Admin action required.");
+  if (!token) throw new Error("Admin action requires authentication.");
   try {
     const response = await fetch(`${BACKEND_URL}/admin/library/submissions/${submissionId}/review`, {
       method: 'POST',

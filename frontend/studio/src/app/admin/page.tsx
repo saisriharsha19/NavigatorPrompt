@@ -1,54 +1,44 @@
 
-import { getAdminStats } from "@/app/actions";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Users, BookText, Library, FileClock } from "lucide-react";
+import { getAdminLibrarySubmissions } from "@/app/actions";
+import { AdminSubmissionsClient } from "@/components/admin-submissions-client";
 import { cookies } from 'next/headers';
 
-export default async function AdminDashboardPage() {
-    const cookieStore = cookies();
-    const token = cookieStore.get('auth_token')?.value;
+export default async function AdminSubmissionsPage({
+  searchParams,
+}: {
+  searchParams: { [key: string]: string | string[] | undefined };
+}) {
+  const cookieStore = await cookies();
+  const token = cookieStore.get('auth_token')?.value;
 
-    // We can assume if no token, stats will return the default empty object.
-    const stats = await getAdminStats(token || '');
-
+  const initialStatus = (searchParams.status as 'PENDING' | 'APPROVED' | 'REJECTED') || 'PENDING';
+  
+  if (!token) {
+    // Handle case where user is not authenticated.
     return (
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Total Users</CardTitle>
-                    <Users className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    <div className="text-2xl font-bold">{stats.users.total}</div>
-                </CardContent>
-            </Card>
-            <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Total History Prompts</CardTitle>
-                    <BookText className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    <div className="text-2xl font-bold">{stats.prompts.user_prompts}</div>
-                </CardContent>
-            </Card>
-            <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Prompts in Library</CardTitle>
-                    <Library className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    <div className="text-2xl font-bold">{stats.prompts.library_prompts}</div>
-                </CardContent>
-            </Card>
-            <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Pending Submissions</CardTitle>
-                    <FileClock className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    <div className="text-2xl font-bold">{stats.submissions.pending}</div>
-                </CardContent>
-            </Card>
+        <div>
+            <h2 className="text-xl font-bold tracking-tight mb-4">Library Submissions</h2>
+            <p className="text-muted-foreground">You must be logged in as an admin to view submissions.</p>
         </div>
-    )
+    );
+  }
+
+  // Fetch all statuses concurrently to provide to the client for instant filtering
+  const [pending, approved, rejected] = await Promise.all([
+    getAdminLibrarySubmissions('PENDING', token),
+    getAdminLibrarySubmissions('APPROVED', token),
+    getAdminLibrarySubmissions('REJECTED', token),
+  ]);
+
+  return (
+    <div>
+      <h2 className="text-xl font-bold tracking-tight mb-4">Library Submissions</h2>
+      <AdminSubmissionsClient
+        initialStatus={initialStatus}
+        pendingSubmissions={pending}
+        approvedSubmissions={approved}
+        rejectedSubmissions={rejected}
+      />
+    </div>
+  );
 }

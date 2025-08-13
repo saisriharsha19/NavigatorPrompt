@@ -8,7 +8,7 @@ export default async function AdminSubmissionsPage({
 }: {
   searchParams: { [key: string]: string | string[] | undefined };
 }) {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const token = cookieStore.get('auth_token')?.value;
 
   const initialStatus = (searchParams.status as 'PENDING' | 'APPROVED' | 'REJECTED') || 'PENDING';

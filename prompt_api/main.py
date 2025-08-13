@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import desc, func, and_
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
-
+from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base, get_db
 from config import settings
 from saml_auth import (
@@ -31,6 +31,7 @@ from celery_worker import (
     analyze_and_tag_task,
     analyze_submission_task
 )
+
 
 # --- Logging Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -281,7 +282,21 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestLoggingMiddleware)
+origins = [
+    "http://localhost.tiangolo.com",
+    "https://localhost.tiangolo.com",
+    "http://localhost",
+    "http://localhost:8080",
+    "*"
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @app.on_event("startup")
 async def startup_event():
     # Don't auto-create tables since we're using migrations

@@ -19,6 +19,7 @@ export type User = {
   is_staff: boolean;
   created_at: string;
   updated_at: string;
+  prompt_count?: number;
 };
 
 // Represents platform-wide statistics

@@ -6,7 +6,7 @@ import { getHistoryPromptsFromDB } from "@/app/actions";
 import { cookies } from "next/headers";
 
 export default async function HistoryPage() {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const token = cookieStore.get('auth_token')?.value;
   
   // Fetch initial prompts on the server. The client hook will manage updates.

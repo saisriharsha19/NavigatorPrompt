@@ -23,64 +23,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-
-function MockLoginDialog() {
-  const { login, isAuthLoading } = useAuth();
-  const [email, setEmail] = React.useState('student@ufl.edu');
-
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    login(email);
-  };
-
-  return (
-    <DialogContent className="sm:max-w-[425px]">
-      <form onSubmit={handleLogin}>
-        <DialogHeader>
-          <DialogTitle>Mock Sign In</DialogTitle>
-          <DialogDescription>
-            Enter an email to simulate logging in as different user types. Use `admin@ufl.edu` for admin access.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="email" className="text-right">
-              Email
-            </Label>
-            <Input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="col-span-3"
-              placeholder="e.g., student@ufl.edu"
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button type="submit" disabled={isAuthLoading}>
-            {isAuthLoading ? 'Signing In...' : 'Sign In'}
-          </Button>
-        </DialogFooter>
-      </form>
-    </DialogContent>
-  );
-}
+import { MockLoginDialog } from './mock-login-dialog';
 
 
 export function AppHeader() {
   const { user, logout } = useAuth();
   const { setTheme } = useTheme();
   const pathname = usePathname();
+  const [isLoginOpen, setIsLoginOpen] = React.useState(false);
+
 
   const navItems = [
     { href: '/', label: 'Generator' },
@@ -185,7 +138,7 @@ export function AppHeader() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <Dialog>
+          <Dialog open={isLoginOpen} onOpenChange={setIsLoginOpen}>
             <DropdownMenu>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -220,7 +173,7 @@ export function AppHeader() {
                   </>
                 ) : (
                    <DialogTrigger asChild>
-                      <DropdownMenuItem className="cursor-pointer">
+                      <DropdownMenuItem className="cursor-pointer" onSelect={(e) => e.preventDefault()}>
                         <LogIn className="mr-2 h-4 w-4" />
                         Sign In
                       </DropdownMenuItem>
@@ -228,7 +181,7 @@ export function AppHeader() {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-            <MockLoginDialog />
+            <MockLoginDialog onSuccess={() => setIsLoginOpen(false)} />
           </Dialog>
         </div>
       </header>

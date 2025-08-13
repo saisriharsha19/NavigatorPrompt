@@ -44,13 +44,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { usePromptHistory } from '@/hooks/use-prompts';
-import { usePromptForge } from '@/hooks/use-prompt-forge';
 import { useLibrary } from '@/hooks/use-library';
 import type { GenerateInitialPromptOutput } from '@/ai/flows/generate-initial-prompt';
 import { Skeleton } from './ui/skeleton';
 import { Separator } from './ui/separator';
 import { DocumentManager } from './document-manager';
+import { Dialog, DialogTrigger } from './ui/dialog';
+import { MockLoginDialog } from './mock-login-dialog';
+import { usePromptForge } from '@/hooks/use-prompt-forge';
 
 type ActionType = 'generate' | 'evaluate' | 'suggest' | null;
 
@@ -83,7 +84,7 @@ const itemVariants = {
 };
 
 export function PromptForgeClient() {
-  const { isAuthenticated, userId, login } = useAuth();
+  const { user, token, login } = useAuth();
   const { addLibrarySubmission } = useLibrary();
   const { toast } = useToast();
 
@@ -100,6 +101,7 @@ export function PromptForgeClient() {
   } = usePromptForge();
 
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
   
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const suggestionPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -164,8 +166,12 @@ export function PromptForgeClient() {
     stopPolling(isSuggestionTask ? 'suggestions' : 'main');
 
     const intervalId = setInterval(async () => {
+      if (!token) {
+        stopPolling(isSuggestionTask ? 'suggestions' : 'main');
+        return;
+      }
       try {
-        const task: TaskStatusResponse = await getTaskResult(status_url);
+        const task: TaskStatusResponse = await getTaskResult(status_url, token);
 
         const statusMap: { [key: string]: string } = {
           PENDING: 'Task is pending...',
@@ -228,7 +234,7 @@ export function PromptForgeClient() {
     } else {
       pollingIntervalRef.current = intervalId;
     }
-  }, [stopPolling, setTaskStatusUrl, setProcessingState, toast, setCurrentPrompt, setEvaluationResult, setSuggestions]);
+  }, [stopPolling, setTaskStatusUrl, setProcessingState, toast, setCurrentPrompt, setEvaluationResult, setSuggestions, token]);
 
   useEffect(() => {
     if (taskStatusUrl && processingState.activeAction) {
@@ -245,13 +251,14 @@ export function PromptForgeClient() {
   }, [stopPolling]);
   
   const onGetSuggestions = async (prompt: string, comments?: string) => {
-    if (!prompt || suggestionsLoading) return;
+    if (!prompt || suggestionsLoading || !token) return;
     setSuggestionsLoading(true);
     setSuggestions([]);
     try {
       const task = await handleGetPromptSuggestions({
         current_prompt: prompt,
         user_comments: comments,
+        token,
       });
       pollTaskStatus(task.status_url, 'suggest');
     } catch (error) {
@@ -265,12 +272,16 @@ export function PromptForgeClient() {
       toast({ variant: 'destructive', title: 'Error', description: 'Please describe your assistant needs first.' });
       return;
     }
+    if (!token) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Please sign in to generate prompts.' });
+      return;
+    }
     const action: ActionType = 'generate';
     setProcessingState({ activeAction: action, statusText: 'Starting generation task...' });
     setEvaluationResult(null);
     setSuggestions([]);
     try {
-      const task = await handleGenerateInitialPrompt({ user_needs: userNeeds });
+      const task = await handleGenerateInitialPrompt({ user_needs: userNeeds, token });
       setTaskStatusUrl(task.status_url);
       setProcessingState(prev => ({ ...prev, statusText: 'Task initiated, awaiting result...' }));
       pollTaskStatus(task.status_url, action);
@@ -285,6 +296,10 @@ export function PromptForgeClient() {
       toast({ variant: 'destructive', title: 'Error', description: 'A prompt and user needs are required for evaluation.' });
       return;
     }
+    if (!token) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Please sign in to evaluate prompts.' });
+      return;
+    }
     const action: ActionType = 'evaluate';
     setProcessingState({ activeAction: action, statusText: 'Starting evaluation task...' });
     setEvaluationResult(null);
@@ -297,7 +312,7 @@ export function PromptForgeClient() {
 
     try {
       // Send the combined prompt and the original user needs
-      const task = await handleEvaluatePrompt({ prompt: promptWithContext, user_needs: userNeeds });
+      const task = await handleEvaluatePrompt({ prompt: promptWithContext, user_needs: userNeeds, token });
       setTaskStatusUrl(task.status_url);
       setProcessingState(prev => ({ ...prev, statusText: 'Task initiated, awaiting evaluation...' }));
       pollTaskStatus(task.status_url, action);
@@ -347,9 +362,9 @@ Selected Suggestions:
         });
         return;
     }
-    if (!userId) {
+    if (!user || !token) {
         toast({ variant: 'destructive', title: 'Authentication Error', description: 'You must be logged in to submit to the library.'});
-        login();
+        setIsLoginOpen(true);
         return;
     }
     addLibrarySubmission(currentPrompt);
@@ -601,52 +616,61 @@ Selected Suggestions:
                    </Button>
                  </div>
                 <div aria-live="polite" aria-atomic="true">
-                  {isAuthenticated && evaluationResult ? (
-                    <div className="space-y-4">
-                      {evaluationResult.improvement_summary && (
-                        <div className="space-y-1">
-                          <h4 className="text-sm font-medium text-foreground">Improvement Summary</h4>
-                          <p className="text-sm text-muted-foreground">
-                            {evaluationResult.improvement_summary}
-                          </p>
-                        </div>
-                      )}
-                      
-                      <Separator />
+                  <Dialog open={isLoginOpen} onOpenChange={setIsLoginOpen}>
+                    {user ? (
+                      evaluationResult ? (
+                      <div className="space-y-4">
+                        {evaluationResult.improvement_summary && (
+                          <div className="space-y-1">
+                            <h4 className="text-sm font-medium text-foreground">Improvement Summary</h4>
+                            <p className="text-sm text-muted-foreground">
+                              {evaluationResult.improvement_summary}
+                            </p>
+                          </div>
+                        )}
+                        
+                        <Separator />
 
-                      <div className="space-y-2">
-                        <h4 className="text-sm font-medium text-foreground">Evaluation Scores</h4>
-                        <ul className="space-y-1.5">
-                          {(Object.keys(evaluationResult) as Array<keyof EvaluateAndIteratePromptOutput>)
-                            .filter(key => key.endsWith('_score'))
-                            .map((key) => {
-                              const score = evaluationResult[key] as number;
-                              return (
-                                <li key={key} className="flex items-center justify-between">
-                                  <span className="text-sm text-muted-foreground">{formatMetricName(key)}</span>
-                                  {typeof score === 'number' ? (
-                                    <Badge variant={score > 0.7 ? 'default' : score > 0.4 ? 'secondary' : 'destructive'} className="w-16 justify-center">
-                                      {Math.round(score * 100)}%
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="secondary" className="w-16 justify-center">N/A</Badge>
-                                  )}
-                                </li>
-                              );
-                            })}
-                        </ul>
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-medium text-foreground">Evaluation Scores</h4>
+                          <ul className="space-y-1.5">
+                            {(Object.keys(evaluationResult) as Array<keyof EvaluateAndIteratePromptOutput>)
+                              .filter(key => key.endsWith('_score'))
+                              .map((key) => {
+                                const score = evaluationResult[key] as number;
+                                return (
+                                  <li key={key} className="flex items-center justify-between">
+                                    <span className="text-sm text-muted-foreground">{formatMetricName(key)}</span>
+                                    {typeof score === 'number' ? (
+                                      <Badge variant={score > 0.7 ? 'default' : score > 0.4 ? 'secondary' : 'destructive'} className="w-16 justify-center">
+                                        {Math.round(score * 100)}%
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="secondary" className="w-16 justify-center">N/A</Badge>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                          </ul>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border p-8 text-center">
-                      <p className="text-muted-foreground">
-                        {isAuthenticated ? 'Your evaluation results will appear here.' : 'Please sign in to view evaluation results.'}
-                      </p>
-                      {!isAuthenticated && (
-                        <Button onClick={login} className='mt-4'>Sign In</Button>
-                      )}
-                    </div>
-                  )}
+                    ) : (
+                      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border p-8 text-center">
+                          <p className="text-muted-foreground">Your evaluation results will appear here.</p>
+                      </div>
+                    )
+                    ) : (
+                      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border p-8 text-center">
+                        <p className="text-muted-foreground">
+                          Please sign in to view evaluation results.
+                        </p>
+                        <DialogTrigger asChild>
+                          <Button className='mt-4' onClick={() => login('student@ufl.edu')}>Sign In</Button>
+                        </DialogTrigger>
+                      </div>
+                    )}
+                     <MockLoginDialog onSuccess={() => setIsLoginOpen(false)} />
+                  </Dialog>
                 </div>
               </CardContent>
               <CardFooter className="flex flex-col gap-2">
