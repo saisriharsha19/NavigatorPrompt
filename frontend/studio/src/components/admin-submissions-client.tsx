@@ -3,12 +3,12 @@
 
 import * as React from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { LibrarySubmission } from '@/hooks/use-prompts';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import type { LibrarySubmission } from '@/hooks/use-prompts';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 import {
   Dialog,
   DialogContent,
@@ -16,46 +16,62 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import { Textarea } from './ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { reviewLibrarySubmission } from '@/app/actions';
-import { ThumbsUp, ThumbsDown, Eye, FileClock, User } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, Eye, FileClock } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { formatDistanceToNow } from 'date-fns';
 
 type ReviewAction = 'approve' | 'reject';
+type Status = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+const isValidDate = (date: any): date is string | number | Date => {
+  if (!date) return false;
+  const parsedDate = new Date(date);
+  return !isNaN(parsedDate.getTime());
+};
 
 export function AdminSubmissionsClient({
-  initialSubmissions,
   initialStatus,
+  pendingSubmissions,
+  approvedSubmissions,
+  rejectedSubmissions,
 }: {
-  initialSubmissions: LibrarySubmission[];
-  initialStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+  initialStatus: Status;
+  pendingSubmissions: LibrarySubmission[];
+  approvedSubmissions: LibrarySubmission[];
+  rejectedSubmissions: LibrarySubmission[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
 
-  const [submissions, setSubmissions] = React.useState(initialSubmissions);
+  const [status, setStatus] = React.useState<Status>(initialStatus);
   const [selectedSubmission, setSelectedSubmission] = React.useState<LibrarySubmission | null>(null);
   const [reviewNotes, setReviewNotes] = React.useState('');
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
 
-  React.useEffect(() => {
-    setSubmissions(initialSubmissions);
-  }, [initialSubmissions]);
+  const submissionsMap: Record<Status, LibrarySubmission[]> = {
+    PENDING: pendingSubmissions,
+    APPROVED: approvedSubmissions,
+    REJECTED: rejectedSubmissions,
+  };
 
-  const handleStatusChange = (status: string) => {
-    const params = new URLSearchParams(window.location.search);
-    params.set('status', status);
-    router.replace(`${pathname}?${params.toString()}`);
+  const currentSubmissions = submissionsMap[status] || [];
+
+  const handleStatusChange = (newStatus: string) => {
+    const validStatus = newStatus as Status;
+    setStatus(validStatus);
+    router.push(`${pathname}?status=${validStatus}`);
   };
 
   const openReviewDialog = (submission: LibrarySubmission) => {
     setSelectedSubmission(submission);
-    setReviewNotes('');
+    setReviewNotes(submission.admin_notes || '');
     setIsDialogOpen(true);
   };
 
@@ -69,9 +85,9 @@ export function AdminSubmissionsClient({
         title: 'Success',
         description: `Submission has been ${action}d.`,
       });
-      // Refresh data
-      handleStatusChange(initialStatus);
       setIsDialogOpen(false);
+      // This will force a server-side refetch of the page with new props
+      router.refresh(); 
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -84,7 +100,7 @@ export function AdminSubmissionsClient({
   };
 
   return (
-    <>
+    <TooltipProvider>
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -98,10 +114,10 @@ export function AdminSubmissionsClient({
               </div>
               <div className="text-sm">
                 <p>
-                  <span className="font-semibold">Submitted by:</span> {selectedSubmission.user?.email || 'Unknown User'}
+                  <span className="font-semibold">Submitted by:</span> {selectedSubmission.user?.full_name || 'N/A'} ({selectedSubmission.user?.email || 'Unknown User'})
                 </p>
                 <p>
-                  <span className="font-semibold">Notes:</span> {selectedSubmission.submission_notes || 'N/A'}
+                  <span className="font-semibold">User Notes:</span> {selectedSubmission.user_notes || 'N/A'}
                 </p>
               </div>
               <Textarea
@@ -118,14 +134,14 @@ export function AdminSubmissionsClient({
               onClick={() => handleReview('reject')}
               disabled={isSubmitting}
             >
-              <ThumbsDown className="mr-2" /> Reject
+              <ThumbsDown className="mr-2 h-4 w-4" /> Reject
             </Button>
             <Button 
                 onClick={() => handleReview('approve')} 
                 disabled={isSubmitting}
                 className="bg-green-600 hover:bg-green-700 text-white"
             >
-              <ThumbsUp className="mr-2" /> Approve
+              <ThumbsUp className="mr-2 h-4 w-4" /> Approve
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -133,16 +149,16 @@ export function AdminSubmissionsClient({
 
       <Card>
         <CardHeader>
-          <Tabs defaultValue={initialStatus} onValueChange={handleStatusChange}>
+          <Tabs value={status} onValueChange={handleStatusChange}>
             <TabsList>
-              <TabsTrigger value="PENDING">Pending</TabsTrigger>
-              <TabsTrigger value="APPROVED">Approved</TabsTrigger>
-              <TabsTrigger value="REJECTED">Rejected</TabsTrigger>
+              <TabsTrigger value="PENDING">Pending ({pendingSubmissions.length})</TabsTrigger>
+              <TabsTrigger value="APPROVED">Approved ({approvedSubmissions.length})</TabsTrigger>
+              <TabsTrigger value="REJECTED">Rejected ({rejectedSubmissions.length})</TabsTrigger>
             </TabsList>
           </Tabs>
         </CardHeader>
         <CardContent>
-          {submissions.length > 0 ? (
+          {currentSubmissions.length > 0 ? (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -153,14 +169,25 @@ export function AdminSubmissionsClient({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {submissions.map((sub) => (
+                {currentSubmissions.map((sub) => (
                   <TableRow key={sub.id}>
                     <TableCell>
                       <div className="font-medium">{sub.user?.full_name || 'N/A'}</div>
                       <div className="text-sm text-muted-foreground">{sub.user?.email}</div>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell">
-                      {formatDistanceToNow(new Date(sub.submitted_at), { addSuffix: true })}
+                      {isValidDate(sub.submitted_at) ? (
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <span className="cursor-default">{format(new Date(sub.submitted_at), 'MMM d, yyyy')}</span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{formatDistanceToNow(new Date(sub.submitted_at), { addSuffix: true })}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        'Invalid date'
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -186,11 +213,11 @@ export function AdminSubmissionsClient({
             <div className="flex flex-col items-center justify-center p-8 text-center">
               <FileClock className="h-12 w-12 text-muted-foreground" />
               <p className="mt-4 font-semibold">No submissions found</p>
-              <p className="text-sm text-muted-foreground">There are no submissions with the status "{initialStatus}".</p>
+              <p className="text-sm text-muted-foreground">There are no submissions with the status "{status}".</p>
             </div>
           )}
         </CardContent>
       </Card>
-    </>
+    </TooltipProvider>
   );
 }

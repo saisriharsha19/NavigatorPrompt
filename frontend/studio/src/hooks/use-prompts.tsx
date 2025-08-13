@@ -20,10 +20,23 @@ export type User = {
 
 // Represents platform-wide statistics
 export type PlatformStats = {
-  total_users: number;
-  total_prompts_in_history: number;
-  total_prompts_in_library: number;
-  pending_submissions: number;
+  users: {
+    total: number;
+    active: number;
+    admins: number;
+  };
+  prompts: {
+    user_prompts: number;
+    library_prompts: number;
+  };
+  submissions: {
+    pending: number;
+  };
+  tasks: {
+    total: number;
+    successful: number;
+    success_rate: number;
+  };
 };
 
 export type Prompt = {
@@ -45,7 +58,8 @@ export type LibrarySubmission = {
     status: 'PENDING' | 'APPROVED' | 'REJECTED';
     submitted_at: string;
     admin_notes?: string;
-    user?: User; 
+    user_notes?: string;
+    user?: Partial<User>; 
 };
 
 

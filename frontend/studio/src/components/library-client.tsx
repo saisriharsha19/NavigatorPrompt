@@ -40,7 +40,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
 import { Badge } from './ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import { motion } from 'framer-motion';
 
 function PromptCardSkeleton() {
@@ -121,7 +121,7 @@ export function LibraryClient() {
     return textMatch || summaryMatch || tagsMatch;
   });
   
-  const isValidDate = (date: any) => date && !isNaN(new Date(date).getTime());
+  const isValidDate = (date: any): date is string | number | Date => date && !isNaN(new Date(date).getTime());
 
   return (
     <TooltipProvider>
@@ -221,12 +221,18 @@ export function LibraryClient() {
                                   {prompt.summary || 'No summary available.'}
                               </CardTitle>
                               <CardDescription>
-                                Added{' '}
-                                {isValidDate(prompt.createdAt)
-                                  ? formatDistanceToNow(new Date(prompt.createdAt), {
-                                      addSuffix: true,
-                                    })
-                                  : 'recently'}
+                                {isValidDate(prompt.createdAt) ? (
+                                    <Tooltip>
+                                        <TooltipTrigger>
+                                            <span className="cursor-default">Added {format(new Date(prompt.createdAt), 'MMM d, yyyy')}</span>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>{formatDistanceToNow(new Date(prompt.createdAt), { addSuffix: true })}</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                ) : (
+                                    'Added recently'
+                                )}
                               </CardDescription>
                           </CardHeader>
                           

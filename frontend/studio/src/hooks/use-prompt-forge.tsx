@@ -2,7 +2,7 @@
 'use client';
 
 import type { EvaluateAndIteratePromptOutput } from '@/ai/flows/evaluate-and-iterate-prompt';
-import { createContext, useContext, useState, ReactNode, Dispatch, SetStateAction, useEffect, useMemo } from 'react';
+import { createContext, useContext, useState, ReactNode, Dispatch, SetStateAction } from 'react';
 
 type UploadedFile = {
   id: string;
@@ -22,7 +22,6 @@ type PromptForgeContextType = {
   setUserNeeds: Dispatch<SetStateAction<string>>;
   currentPrompt: string;
   setCurrentPrompt: Dispatch<SetStateAction<string>>;
-  contextualPrompt: string; 
   uploadedFiles: UploadedFile[];
   setUploadedFiles: Dispatch<SetStateAction<UploadedFile[]>>;
   iterationComments: string;
@@ -58,25 +57,9 @@ export function PromptForgeProvider({ children }: { children: ReactNode }) {
   });
   const [taskStatusUrl, setTaskStatusUrl] = useState<string | null>(null);
 
-
-  const contextualPrompt = useMemo(() => {
-    if (uploadedFiles.length === 0) {
-      return currentPrompt;
-    }
-    const contextMarker = '\n\n--- [DOCUMENT CONTEXT] ---';
-    const newContextContent = uploadedFiles
-      .map(file => `\n## Document: ${file.name}\n\n${file.content}`)
-      .join('\n\n');
-    
-    // Always append to the current base prompt
-    return `${currentPrompt}${contextMarker}${newContextContent}`;
-
-  }, [currentPrompt, uploadedFiles]);
-
   const value = {
     userNeeds, setUserNeeds,
     currentPrompt, setCurrentPrompt,
-    contextualPrompt,
     uploadedFiles, setUploadedFiles,
     iterationComments, setIterationComments,
     suggestions, setSuggestions,

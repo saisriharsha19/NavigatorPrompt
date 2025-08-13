@@ -9,7 +9,7 @@ import type { Prompt, LibrarySubmission, User, PlatformStats } from '@/hooks/use
 import { revalidatePath } from 'next/cache';
 import type { GeneratePromptMetadataOutput } from '@/ai/flows/generate-prompt-tags';
 
-const BACKEND_URL = process.env.PYTHON_BACKEND_URL || 'http://localhost:5000';
+const BACKEND_URL = process.env.PYTHON_BACKEND_URL || 'http://localhost:8000';
 const ADMIN_KEY = process.env.ADMIN_KEY;
 
 const getErrorMessage = (error: unknown): string => {
@@ -145,7 +145,13 @@ export async function getHistoryPromptsFromDB(userId: string): Promise<Prompt[]>
         throw new Error(errorData.detail || 'Failed to fetch user history.');
     }
 
-    const prompts: Prompt[] = await response.json();
+    const rawPrompts: any[] = await response.json();
+    const prompts: Prompt[] = rawPrompts.map(p => ({
+      id: p.id,
+      userId: p.user_id,
+      text: p.prompt_text,
+      createdAt: p.created_at,
+    }));
     return prompts;
   } catch (error) {
     console.error('Failed to get history prompts:', error);
@@ -209,7 +215,10 @@ export async function getLibraryPromptsFromDB(userId: string | null): Promise<Pr
       throw new Error(errorData.detail || `API request failed with status ${response.status}`);
     }
     
-    const prompts: Prompt[] = await response.json();
+    const prompts: Prompt[] = (await response.json()).map((p: any) => ({
+      ...p,
+      isStarredByUser: p.is_starred_by_user,
+    }));
     return prompts;
   } catch (error) {
     console.error(`API call for library prompts failed: ${getErrorMessage(error)}`);
@@ -283,7 +292,6 @@ export async function toggleStarForPrompt(promptId: string, request: { user_id: 
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${MOCK_AUTH_TOKEN}`,
         },
         body: JSON.stringify(request),
     });
@@ -310,22 +318,25 @@ export async function toggleStarForPrompt(promptId: string, request: { user_id: 
 // --- Admin Actions ---
 
 export async function getAdminStats(): Promise<PlatformStats> {
-  if (!ADMIN_KEY) throw new Error("Admin action required.");
   try {
     const response = await fetch(`${BACKEND_URL}/admin/stats`, {
-      headers: { 'X-Admin-Key': ADMIN_KEY },
+      headers: { 'X-Admin-Key': ADMIN_KEY || '' },
       cache: 'no-store',
     });
-    if (!response.ok) throw new Error('Failed to fetch admin stats.');
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error('Failed to fetch admin stats, server responded with:', errorBody);
+      throw new Error(`Failed to fetch admin stats. Status: ${response.status}`);
+    }
     return await response.json();
   } catch (error) {
     console.error('Error fetching admin stats:', error);
-    // Return a default/empty stats object on error
+    // Return a default/empty stats object on error to prevent crashing the page.
     return {
-      total_users: 0,
-      total_prompts_in_history: 0,
-      total_prompts_in_library: 0,
-      pending_submissions: 0,
+      users: { total: 0, active: 0, admins: 0 },
+      prompts: { user_prompts: 0, library_prompts: 0 },
+      submissions: { pending: 0 },
+      tasks: { total: 0, successful: 0, success_rate: 0 },
     };
   }
 }
@@ -338,7 +349,11 @@ export async function getAdminUsers(): Promise<User[]> {
       cache: 'no-store',
     });
     if (!response.ok) throw new Error('Failed to fetch users.');
-    return await response.json();
+    const users: User[] = (await response.json()).map((u: any) => ({
+      ...u,
+      prompt_count: u.prompt_count || 0,
+    }));
+    return users;
   } catch (error) {
     console.error('Error fetching users:', error);
     return [];
@@ -353,7 +368,28 @@ export async function getAdminLibrarySubmissions(status: 'PENDING' | 'APPROVED' 
       cache: 'no-store',
     });
     if (!response.ok) throw new Error('Failed to fetch library submissions.');
-    return await response.json();
+    
+    // Map the raw response to the LibrarySubmission type
+    const submissions: LibrarySubmission[] = (await response.json()).map((s: any) => ({
+      id: s.id,
+      prompt_text: s.prompt_text,
+      user_id: s.user_id,
+      status: s.status,
+      submitted_at: s.created_at, // Map created_at to submitted_at
+      admin_notes: s.admin_notes,
+      user: {
+        id: s.user_id,
+        email: s.user_email || 'Unknown Email',
+        full_name: s.user?.full_name || 'Unknown User',
+        // Provide default values for other User fields
+        username: s.user?.username || '',
+        is_admin: s.user?.is_admin || false,
+        is_active: s.user?.is_active || true,
+        created_at: s.user?.created_at || new Date().toISOString(),
+        updated_at: s.user?.updated_at || new Date().toISOString(),
+      },
+    }));
+    return submissions;
   } catch (error) {
     console.error('Error fetching library submissions:', error);
     return [];

@@ -14,7 +14,7 @@ export default async function AdminDashboardPage() {
                     <Users className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                    <div className="text-2xl font-bold">{stats.total_users}</div>
+                    <div className="text-2xl font-bold">{stats.users.total}</div>
                 </CardContent>
             </Card>
             <Card>
@@ -23,7 +23,7 @@ export default async function AdminDashboardPage() {
                     <BookText className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                    <div className="text-2xl font-bold">{stats.total_prompts_in_history}</div>
+                    <div className="text-2xl font-bold">{stats.prompts.user_prompts}</div>
                 </CardContent>
             </Card>
             <Card>
@@ -32,7 +32,7 @@ export default async function AdminDashboardPage() {
                     <Library className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                    <div className="text-2xl font-bold">{stats.total_prompts_in_library}</div>
+                    <div className="text-2xl font-bold">{stats.prompts.library_prompts}</div>
                 </CardContent>
             </Card>
             <Card>
@@ -41,7 +41,7 @@ export default async function AdminDashboardPage() {
                     <FileClock className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                    <div className="text-2xl font-bold">{stats.pending_submissions}</div>
+                    <div className="text-2xl font-bold">{stats.submissions.pending}</div>
                 </CardContent>
             </Card>
         </div>

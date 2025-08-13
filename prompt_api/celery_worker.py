@@ -17,8 +17,11 @@ from config import settings
 from prompts import PROMPT_TEMPLATES
 from database import AsyncSessionLocal
 from models import (
-    Task, GeneratedPrompt, PromptEvaluation, PromptSuggestion, PromptAnalysis, LibraryPrompt
+    Task, GeneratedPrompt, PromptEvaluation, PromptSuggestion, PromptAnalysis, 
+    LibraryPrompt, LibrarySubmission, UserPrompt, User
 )
+from sqlalchemy.future import select
+from sqlalchemy import desc
 
 logger = get_task_logger(__name__)
 
@@ -54,62 +57,115 @@ def extract_json_from_response(llm_content: str) -> str:
     return llm_content
 
 
+async def manage_user_prompt_history(user_id: str, prompt_text: str, task_type: str, session):
+    """
+    Manages user's prompt history, keeping only top 20 most recent prompts.
+    """
+    try:
+        # Add new prompt to history
+        user_prompt = UserPrompt(
+            user_id=user_id,
+            prompt_text=prompt_text,
+            task_type=task_type
+        )
+        session.add(user_prompt)
+        
+        # Get current count of user prompts
+        count_result = await session.execute(
+            select(UserPrompt).where(UserPrompt.user_id == user_id)
+        )
+        user_prompts = count_result.scalars().all()
+        
+        # If more than 20, delete oldest ones
+        if len(user_prompts) >= 20:
+            # Get oldest prompts to delete
+            oldest_prompts = await session.execute(
+                select(UserPrompt)
+                .where(UserPrompt.user_id == user_id)
+                .order_by(UserPrompt.created_at.asc())
+                .limit(len(user_prompts) - 19)  # Keep 19 + new one = 20
+            )
+            
+            for old_prompt in oldest_prompts.scalars():
+                await session.delete(old_prompt)
+                
+        await session.commit()
+        logger.info(f"Updated prompt history for user {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Error managing user prompt history: {e}")
+        await session.rollback()
+
+
 # --- Celery Tasks ---
 
-@celery_app.task(name="tasks.add_to_library")
-def add_to_library_task(task_id: str, request_data: dict):
+@celery_app.task(name="tasks.analyze_submission")
+def analyze_submission_task(submission_id: str):
     """
-    Full workflow to analyze a prompt and add it to the library.
+    Analyzes a library submission and saves the analysis results.
     """
-    logger.info(f"Executing add_to_library_task for task_id: {task_id}")
+    logger.info(f"Executing analyze_submission_task for submission_id: {submission_id}")
     
     async def run_task():
         session = AsyncSessionLocal()
         try:
-            task = await session.get(Task, task_id)
-            if not task:
-                logger.error(f"Task {task_id} not found.")
+            submission = await session.get(LibrarySubmission, submission_id)
+            if not submission:
+                logger.error(f"Submission {submission_id} not found.")
                 return
 
-            prompt_text = request_data.get("prompt_text")
-            user_id = request_data.get("user_id")
-
-            # --- Step 1: Analyze the prompt (similar to analyze_and_tag_task) ---
+            # Create a task for this analysis
+            task = Task(task_type="submission_analysis", user_id=submission.user_id)
+            session.add(task)
+            await session.commit()
+            await session.refresh(task)
+            
+            # Update submission with task_id
+            submission.task_id = task.id
+            
+            # Analyze the prompt
             analysis_template = PROMPT_TEMPLATES["analysis_and_tagging"]
             formatted_prompt = analysis_template["template"].format(
-                promptText=prompt_text, targetedContext=""
+                promptText=submission.prompt_text, targetedContext=""
             )
             
             headers = {"Authorization": f"Bearer {settings.API_KEY}", "Content-Type": "application/json"}
             payload = {"model": settings.MODEL_NAME, "messages": [{"role": "user", "content": formatted_prompt}]}
-
             async with httpx.AsyncClient(timeout=300.0) as client:
-                if not settings.BASE_URL:
-                    raise ValueError("settings.BASE_URL is not set")
                 response = await client.post(settings.BASE_URL, json=payload, headers=headers)
                 response.raise_for_status()
-
-            response_data = response.json()
-            llm_content = response_data["choices"][0]["message"]["content"]
+            llm_content = response.json()["choices"][0]["message"]["content"]
             cleaned_content = extract_json_from_response(llm_content)
-            analysis_json = json.loads(cleaned_content)
-            
-            # --- Step 2: Save the prompt with its analysis to the library ---
-            new_prompt = LibraryPrompt(
-                user_id=user_id,
-                text=prompt_text,
-                summary=analysis_json.get("summary"),
-                tags=analysis_json.get("tags")
-            )
-            session.add(new_prompt)
-            
-            # Associate the final library prompt with the task for retrieval
-            task.library_prompt = new_prompt
-            task.status = "SUCCESS"
-            task.completed_at = datetime.now()
-            await session.commit()
-            logger.info(f"Task {task_id} (add_to_library) completed successfully.")
+            result_json = json.loads(cleaned_content)
 
+            quality = result_json.get("qualityIndicators", {})
+            category = result_json.get("categoryAnalysis", {})
+            raw_pg = quality.get("professional_grade", False)
+            professional_grade_bool = str(raw_pg).lower() in ['true', '1']
+
+            new_analysis = PromptAnalysis(
+                task_id=task_id, summary=result_json.get("summary"), tags=result_json.get("tags"),
+                clarity=quality.get("clarity"), bias_risk=quality.get("bias_risk"),
+                safety_level=quality.get("safety_level"), completeness=quality.get("completeness"),
+                professional_grade=professional_grade_bool,
+                primary_domain=category.get("primary_domain"), main_purpose=category.get("main_purpose"),
+                target_audience=category.get("target_audience"), complexity_level=category.get("complexity_level")
+            )
+            session.add(new_analysis)
+            
+            # Manage user prompt history
+            if task.user_id:
+                await manage_user_prompt_history(
+                    str(task.user_id), 
+                    request_data.get("prompt_text", ""), 
+                    "analysis", 
+                    session
+                )
+            
+            task.status = "SUCCESS"
+            task.completed_at = datetime.utcnow()
+            await session.commit()
+            logger.info(f"Task {task_id} completed successfully.")
         except Exception as e:
             logger.error(f"Error in task {task_id}: {e}", exc_info=True)
             await session.rollback()
@@ -122,9 +178,7 @@ def add_to_library_task(task_id: str, request_data: dict):
                     await error_session.commit()
         finally:
             await session.close()
-
     asyncio.run(run_task())
-
 
 @celery_app.task(name="tasks.create_initial_prompt")
 def create_initial_prompt_task(task_id: str, request_data: dict):
@@ -160,6 +214,16 @@ def create_initial_prompt_task(task_id: str, request_data: dict):
                 initial_prompt=initial_prompt_text
             )
             session.add(new_prompt)
+            
+            # Manage user prompt history
+            if task.user_id:
+                await manage_user_prompt_history(
+                    str(task.user_id), 
+                    initial_prompt_text, 
+                    "generation", 
+                    session
+                )
+            
             task.status = "SUCCESS"
             task.completed_at = datetime.utcnow()
             await session.commit()
@@ -221,6 +285,16 @@ def evaluate_prompt_task(task_id: str, request_data: dict):
                 alignment_test_cases=alignment_data.get("testCases"),
             )
             session.add(new_eval)
+            
+            # Manage user prompt history
+            if task.user_id:
+                await manage_user_prompt_history(
+                    str(task.user_id), 
+                    request_data["prompt"], 
+                    "evaluation", 
+                    session
+                )
+            
             task.status = "SUCCESS"
             task.completed_at = datetime.utcnow()
             await session.commit()
@@ -276,6 +350,15 @@ def generate_suggestions_task(task_id: str, request_data: dict):
                     impact=sug_data.get("impact"), priority_score=priority_score_int
                 )
                 session.add(new_suggestion)
+            
+            # Manage user prompt history
+            if task.user_id:
+                await manage_user_prompt_history(
+                    str(task.user_id), 
+                    request_data.get("current_prompt", ""), 
+                    "suggestions", 
+                    session
+                )
             
             task.status = "SUCCESS"
             task.completed_at = datetime.utcnow()
@@ -333,6 +416,15 @@ def analyze_and_tag_task(task_id: str, request_data: dict):
             )
             session.add(new_analysis)
             
+            # Manage user prompt history
+            if task.user_id:
+                await manage_user_prompt_history(
+                    str(task.user_id), 
+                    request_data.get("prompt_text", ""), 
+                    "analysis", 
+                    session
+                )
+            
             task.status = "SUCCESS"
             task.completed_at = datetime.utcnow()
             await session.commit()
@@ -341,12 +433,12 @@ def analyze_and_tag_task(task_id: str, request_data: dict):
             logger.error(f"Error in task {task_id}: {e}", exc_info=True)
             await session.rollback()
             async with AsyncSessionLocal() as error_session:
-                 task_to_update = await error_session.get(Task, task_id)
-                 if task_to_update:
+                task_to_update = await error_session.get(Task, task_id)
+                if task_to_update:
                     task_to_update.status = "FAILURE"
                     task_to_update.error_message = str(e)
                     task_to_update.completed_at = datetime.utcnow()
-                    await error_session.commit()
+            await error_session.commit()
         finally:
             await session.close()
     asyncio.run(run_task())
