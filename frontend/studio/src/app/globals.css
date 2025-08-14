@@ -1,3 +1,5 @@
+/* Add to frontend/studio/src/app/globals.css */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -81,8 +83,25 @@
   * {
     @apply border-border;
   }
+  
+  html {
+    /* Prevent horizontal scrolling on mobile */
+    overflow-x: hidden;
+  }
+  
   body {
     @apply bg-background text-foreground;
+    /* Better mobile viewport handling */
+    min-height: 100vh;
+    min-height: 100dvh; /* Dynamic viewport height for mobile */
+    overflow-x: hidden;
+    /* Improve text rendering on mobile */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Prevent text size adjustment on mobile */
+    -webkit-text-size-adjust: 100%;
+    -moz-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 }
 
@@ -98,59 +117,50 @@
     white-space: nowrap;
     border-width: 0;
   }
-}
-
-
-/* Mobile-first responsive improvements */
-@media (max-width: 640px) {
-  .container {
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
   
-  /* Improve card spacing on mobile */
-  .card-mobile {
-    margin-bottom: 1rem;
-  }
-  
-  /* Better touch targets */
-  button, .button {
+  /* Better mobile touch targets */
+  .touch-target {
     min-height: 44px;
     min-width: 44px;
   }
   
-  /* Improve text readability on mobile */
-  .text-sm {
-    font-size: 0.875rem;
-    line-height: 1.25rem;
+  /* Prevent zoom on input focus (mobile) */
+  .no-zoom {
+    font-size: 16px;
   }
   
-  /* Better modal spacing on mobile */
-  .modal-content {
-    margin: 1rem;
-    max-height: calc(100vh - 2rem);
+  /* Mobile-friendly scrolling */
+  .mobile-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   
-  /* Improve form elements on mobile */
+  /* Safe area padding for notched devices */
+  .safe-area-padding {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+/* Mobile-specific fixes */
+@media (max-width: 768px) {
+  /* Ensure inputs don't zoom on focus */
   input, textarea, select {
-    font-size: 16px; /* Prevents zoom on iOS */
-  }
-}
-
-/* Improve scrolling on mobile */
-.scroll-smooth {
-  scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Better focus states for mobile */
-@media (hover: none) and (pointer: coarse) {
-  .hover.bg-accent:hover {
-    background-color: transparent;
+    font-size: 16px !important;
   }
   
-  .focus.bg-accent:focus,
-  .active.bg-accent:active {
-    background-color: hsl(var(--accent));
+  /* Better button sizing for touch */
+  button {
+    min-height: 44px;
   }
+  
+  /* Improve card spacing on mobile */
+  .mobile-card-spacing {
+    margin-bottom: 1rem;
+  }
+  
+  /* Better text sizing for mobile */
+  h1 { font-size: 1.75rem; }
+  h2 { font-size: 1.5rem; }
+  h3 { font-size: 1.25rem; }
 }
