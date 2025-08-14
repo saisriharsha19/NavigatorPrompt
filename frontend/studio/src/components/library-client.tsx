@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState } from 'react';
@@ -32,7 +31,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Clipboard, Check, Search, Star, Trash2, Eye } from 'lucide-react';
+import { Clipboard, Check, Search, Star, Trash2, Eye, CheckCircle, XCircle, Clock, Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from './ui/input';
 import { Skeleton } from './ui/skeleton';
@@ -40,8 +39,14 @@ import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
 import { Badge } from './ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { format, formatDistanceToNow } from 'date-fns';
-import { motion } from 'framer-motion';
+import { formatDistanceToNow } from 'date-fns';
+
+// Extended Prompt type to include submission data
+interface ExtendedPrompt extends Prompt {
+  status?: 'APPROVED' | 'PENDING' | 'REJECTED';
+  admin_notes?: string;
+  submission_notes?: string;
+}
 
 function PromptCardSkeleton() {
   return (
@@ -74,39 +79,47 @@ function PromptCardSkeleton() {
   );
 }
 
-const containerVariants = {
-  hidden: { opacity: 1 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.05,
-    },
-  },
-};
+function getStatusBadge(status?: string) {
+  switch (status) {
+    case 'APPROVED':
+      return (
+        <Badge variant="default" className="flex items-center gap-1">
+          <CheckCircle className="h-3 w-3" />
+          Approved
+        </Badge>
+      );
+    case 'PENDING':
+      return (
+        <Badge variant="secondary" className="flex items-center gap-1">
+          <Clock className="h-3 w-3" />
+          Pending Review
+        </Badge>
+      );
+    case 'REJECTED':
+      return (
+        <Badge variant="destructive" className="flex items-center gap-1">
+          <XCircle className="h-3 w-3" />
+          Rejected
+        </Badge>
+      );
+    default:
+      return null;
+  }
+}
 
-const itemVariants = {
-  hidden: { y: 20, opacity: 0 },
-  visible: {
-    y: 0,
-    opacity: 1,
-    transition: {
-      type: 'spring',
-      stiffness: 100,
-      damping: 10,
-    },
-  },
-};
-
-
-export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) {
-  const { libraryPrompts, toggleStar, isLoading, deleteLibraryPrompt } = useLibrary(initialPrompts);
-  const { user } = useAuth();
+export function LibraryClient() {
+  const { libraryPrompts, toggleStar, isLoading, deleteLibraryPrompt, addLibraryPrompt } = useLibrary();
+  const { isAuthenticated, isAdmin } = useAuth();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewingPrompt, setViewingPrompt] = useState<Prompt | null>(null);
+  const [viewingPrompt, setViewingPrompt] = useState<ExtendedPrompt | null>(null);
+  const [submissionDialogOpen, setSubmissionDialogOpen] = useState(false);
+  const [submissionText, setSubmissionText] = useState('');
+  const [submissionNotes, setSubmissionNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
 
-  const copyToClipboard = (prompt: Prompt) => {
+  const copyToClipboard = (prompt: ExtendedPrompt) => {
     navigator.clipboard.writeText(prompt.text);
     setCopiedId(prompt.id);
     toast({ title: 'Copied!', description: 'Prompt copied to clipboard.' });
@@ -121,14 +134,49 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
     return textMatch || summaryMatch || tagsMatch;
   });
   
-  const isValidDate = (date: any): date is string | number | Date => date && !isNaN(new Date(date).getTime());
+  const isValidDate = (date: any) => date && !isNaN(new Date(date).getTime());
+
+  const handleSubmitToLibrary = async () => {
+    if (!submissionText.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Please enter a prompt to submit.',
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await addLibraryPrompt(submissionText, submissionNotes);
+      setSubmissionText('');
+      setSubmissionNotes('');
+      setSubmissionDialogOpen(false);
+      toast({
+        title: 'Submission Successful',
+        description: 'Your prompt has been submitted for admin review.',
+      });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Submission Failed',
+        description: error.message || 'Failed to submit prompt for review.',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <TooltipProvider>
+      {/* View Prompt Dialog */}
       <Dialog open={!!viewingPrompt} onOpenChange={(isOpen) => !isOpen && setViewingPrompt(null)}>
           <DialogContent className="sm:max-w-2xl">
               <DialogHeader>
-                  <DialogTitle>{viewingPrompt?.summary || 'Prompt Details'}</DialogTitle>
+                  <div className="flex items-center justify-between">
+                    <DialogTitle>{viewingPrompt?.summary || 'Prompt Details'}</DialogTitle>
+                    {viewingPrompt?.status && getStatusBadge(viewingPrompt.status)}
+                  </div>
                   <DialogDescription>
                       Full content of the selected prompt. You can copy it from here.
                   </DialogDescription>
@@ -139,6 +187,12 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
                           {viewingPrompt?.text}
                       </p>
                   </ScrollArea>
+                  {viewingPrompt?.admin_notes && (
+                    <div className="mt-4 p-3 bg-muted rounded-md">
+                      <h4 className="text-sm font-medium mb-1">Admin Notes:</h4>
+                      <p className="text-sm text-muted-foreground">{viewingPrompt.admin_notes}</p>
+                    </div>
+                  )}
                   {viewingPrompt && (
                       <Tooltip>
                           <TooltipTrigger asChild>
@@ -159,6 +213,61 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
                   )}
               </div>
           </DialogContent>
+      </Dialog>
+
+      {/* Submit to Library Dialog */}
+      <Dialog open={submissionDialogOpen} onOpenChange={setSubmissionDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Submit Prompt to Library</DialogTitle>
+            <DialogDescription>
+              Submit your prompt for admin review. Approved prompts will be added to the public library.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="submission-text" className="text-sm font-medium">
+                Prompt Text *
+              </label>
+              <textarea
+                id="submission-text"
+                className="w-full mt-1 min-h-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                placeholder="Enter your prompt here..."
+                value={submissionText}
+                onChange={(e) => setSubmissionText(e.target.value)}
+                disabled={isSubmitting}
+              />
+            </div>
+            <div>
+              <label htmlFor="submission-notes" className="text-sm font-medium">
+                Notes (Optional)
+              </label>
+              <textarea
+                id="submission-notes"
+                className="w-full mt-1 min-h-[100px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                placeholder="Add any notes for the admin (e.g., use cases, context, etc.)"
+                value={submissionNotes}
+                onChange={(e) => setSubmissionNotes(e.target.value)}
+                disabled={isSubmitting}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setSubmissionDialogOpen(false)}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSubmitToLibrary}
+                disabled={isSubmitting || !submissionText.trim()}
+              >
+                {isSubmitting ? 'Submitting...' : 'Submit for Review'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
       </Dialog>
 
       <div className="container mx-auto max-w-7xl py-8 px-4 sm:px-6 lg:px-8">
@@ -189,15 +298,26 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
               </div>
             </div>
           </div>
-          <div className="relative w-full sm:w-80">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-            <Input 
-              placeholder="Search library..."
-              aria-label="Search prompt library"
-              className="h-11 w-full rounded-full border-transparent bg-muted pl-12 pr-4 transition-colors focus:bg-background focus:ring-2 focus:ring-ring"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+          <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+            <div className="relative w-full sm:w-80">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+              <Input 
+                placeholder="Search library..."
+                aria-label="Search prompt library"
+                className="h-11 w-full rounded-full border-transparent bg-muted pl-12 pr-4 transition-colors focus:bg-background focus:ring-2 focus:ring-ring"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            {isAuthenticated && (
+              <Button
+                onClick={() => setSubmissionDialogOpen(true)}
+                className="flex items-center gap-2"
+              >
+                <Upload className="h-4 w-4" />
+                Submit Prompt
+              </Button>
+            )}
           </div>
         </div>
 
@@ -207,32 +327,28 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
               {Array.from({ length: 8 }).map((_, i) => <li key={i}><PromptCardSkeleton /></li>)}
             </ul>
           ) : filteredPrompts.length > 0 ? (
-            <motion.ul
-              className="grid grid-cols-1 gap-6"
-              variants={containerVariants}
-              initial="hidden"
-              animate="visible"
-            >
+            <ul className="grid grid-cols-1 gap-6">
               {filteredPrompts.map((prompt) => (
-                  <motion.li key={prompt.id} variants={itemVariants}>
-                      <Card className="flex h-full flex-col">
+                  <li key={prompt.id}>
+                      <Card className="flex flex-col">
                           <CardHeader className="p-4 sm:p-6">
-                              <CardTitle>
-                                  {prompt.summary || 'No summary available.'}
-                              </CardTitle>
-                              <CardDescription>
-                                {isValidDate(prompt.createdAt) ? (
-                                    <Tooltip>
-                                        <TooltipTrigger>
-                                            <span className="cursor-default">Added {format(new Date(prompt.createdAt), 'MMM d, yyyy')}</span>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                            <p>{formatDistanceToNow(new Date(prompt.createdAt), { addSuffix: true })}</p>
-                                        </TooltipContent>
-                                    </Tooltip>
-                                ) : (
-                                    'Added recently'
+                              <div className="flex items-start justify-between">
+                                <CardTitle className="flex-1">
+                                    {prompt.summary || 'No summary available.'}
+                                </CardTitle>
+                                {(prompt as ExtendedPrompt).status && (
+                                  <div className="ml-2">
+                                    {getStatusBadge((prompt as ExtendedPrompt).status)}
+                                  </div>
                                 )}
+                              </div>
+                              <CardDescription>
+                                Added{' '}
+                                {isValidDate(prompt.createdAt)
+                                  ? formatDistanceToNow(new Date(prompt.createdAt), {
+                                      addSuffix: true,
+                                    })
+                                  : 'recently'}
                               </CardDescription>
                           </CardHeader>
                           
@@ -260,7 +376,7 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
                                   variant="ghost" 
                                   className="flex items-center gap-1.5 px-2 text-sm text-muted-foreground" 
                                   onClick={() => toggleStar(prompt.id)} 
-                                  disabled={!user}
+                                  disabled={!isAuthenticated}
                                   aria-label={prompt.isStarredByUser ? "Un-star this prompt" : "Star this prompt"}
                                 >
                                     <Star className={cn("h-4 w-4 transition-colors", prompt.isStarredByUser && "fill-yellow-400 text-yellow-400")} />
@@ -278,7 +394,7 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
                                         <Button
                                             variant="ghost"
                                             size="icon"
-                                            onClick={() => setViewingPrompt(prompt)}
+                                            onClick={() => setViewingPrompt(prompt as ExtendedPrompt)}
                                             aria-label="View prompt"
                                         >
                                             <Eye className="h-4 w-4" />
@@ -294,7 +410,7 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        onClick={() => copyToClipboard(prompt)}
+                                        onClick={() => copyToClipboard(prompt as ExtendedPrompt)}
                                         aria-label="Copy prompt"
                                     >
                                         {copiedId === prompt.id ? (
@@ -309,7 +425,7 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
                                 </TooltipContent>
                                 </Tooltip>
 
-                                {user?.is_admin && (
+                                {isAdmin && (
                                     <AlertDialog>
                                     <Tooltip>
                                         <TooltipTrigger asChild>
@@ -342,16 +458,16 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
                             </div>
                           </CardFooter>
                       </Card>
-                  </motion.li>
+                  </li>
               ))}
-            </motion.ul>
+            </ul>
           ) : (
             <div role="region" aria-labelledby="empty-library-heading" className="flex h-[50vh] flex-col items-center justify-center rounded-lg border-2 border-dashed">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="24"
                 height="24"
-                viewBox="0 0 24"
+                viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
@@ -364,9 +480,18 @@ export function LibraryClient({ initialPrompts }: { initialPrompts: Prompt[] }) 
                 <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
               </svg>
               <h2 id="empty-library-heading" className="text-2xl font-semibold">Library is Empty</h2>
-              <p className="mt-2 text-muted-foreground">
+              <p className="mt-2 text-muted-foreground text-center">
                 {searchQuery ? "No prompts match your search." : "Be the first to add a prompt to the public library!"}
               </p>
+              {isAuthenticated && !searchQuery && (
+                <Button
+                  onClick={() => setSubmissionDialogOpen(true)}
+                  className="mt-4 flex items-center gap-2"
+                >
+                  <Upload className="h-4 w-4" />
+                  Submit First Prompt
+                </Button>
+              )}
             </div>
           )}
         </ScrollArea>

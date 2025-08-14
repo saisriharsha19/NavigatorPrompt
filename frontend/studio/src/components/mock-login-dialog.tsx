@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from './ui/button';
 import { useAuth } from '@/hooks/use-auth';
+import { Loader2 } from 'lucide-react';
 
 type MockLoginDialogProps = {
   onSuccess?: () => void;
@@ -51,12 +52,13 @@ export function MockLoginDialog({ onSuccess }: MockLoginDialogProps) {
               onChange={(e) => setEmail(e.target.value)}
               className="col-span-3"
               placeholder="e.g., student@ufl.edu"
+              disabled={isAuthLoading}
             />
           </div>
         </div>
         <DialogFooter>
           <Button type="submit" disabled={isAuthLoading}>
-            {isAuthLoading ? 'Signing In...' : 'Sign In'}
+            {isAuthLoading ? <Loader2 className="animate-spin" /> : 'Sign In'}
           </Button>
         </DialogFooter>
       </form>

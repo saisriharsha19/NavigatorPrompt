@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -26,16 +25,6 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import {
-  handleGenerateInitialPrompt,
-  handleEvaluatePrompt,
-  handleGetPromptSuggestions,
-  getTaskResult,
-  type TaskStatusResponse,
-} from '@/app/actions';
-import { Badge, badgeVariants } from './ui/badge';
-import { useAuth } from '@/hooks/use-auth';
-import { cn } from '@/lib/utils';
 import type { EvaluateAndIteratePromptOutput } from '@/ai/flows/evaluate-and-iterate-prompt';
 import type { GeneratePromptSuggestionsOutput } from '@/ai/flows/get-prompt-suggestions';
 import {
@@ -44,48 +33,46 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { usePromptHistory } from '@/hooks/use-prompts';
+import { usePromptForge } from '@/hooks/use-prompt-forge';
 import { useLibrary } from '@/hooks/use-library';
 import type { GenerateInitialPromptOutput } from '@/ai/flows/generate-initial-prompt';
 import { Skeleton } from './ui/skeleton';
 import { Separator } from './ui/separator';
 import { DocumentManager } from './document-manager';
-import { Dialog, DialogTrigger } from './ui/dialog';
-import { MockLoginDialog } from './mock-login-dialog';
-import { usePromptForge } from '@/hooks/use-prompt-forge';
+import { Badge, badgeVariants } from './ui/badge';
+import { useAuth } from '@/hooks/use-auth';
+import { cn } from '@/lib/utils';
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
 type ActionType = 'generate' | 'evaluate' | 'suggest' | null;
 
+type TaskStatusResponse = {
+  task_id: string;
+  task_type: string;
+  status: 'PENDING' | 'STARTED' | 'SUCCESS' | 'FAILURE' | 'RETRY';
+  created_at: string;
+  completed_at?: string;
+  error_message?: string;
+  result?: GenerateInitialPromptOutput | EvaluateAndIteratePromptOutput | GeneratePromptSuggestionsOutput;
+};
+
+type TaskCreationResponse = {
+  task_id: string;
+  status_url: string;
+};
+
+// Helper to format metric names for display
 const formatMetricName = (name: string) => {
     const spaced = name.replace(/_score$/, '').replace(/_/g, ' ');
-    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-};
-
-const containerVariants = {
-  hidden: { opacity: 1 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.1,
-    },
-  },
-};
-
-const itemVariants = {
-  hidden: { y: 20, opacity: 0 },
-  visible: {
-    y: 0,
-    opacity: 1,
-    transition: {
-      type: 'spring',
-      stiffness: 100,
-      damping: 10,
-    },
-  },
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1  );
 };
 
 export function PromptForgeClient() {
-  const { user, token, login } = useAuth();
-  const { addLibrarySubmission } = useLibrary();
+  const { isAuthenticated, userId, login } = useAuth();
+  const { addPrompt } = usePromptHistory();
+  const { addLibraryPrompt } = useLibrary();
   const { toast } = useToast();
 
   const {
@@ -97,16 +84,41 @@ export function PromptForgeClient() {
     evaluationResult, setEvaluationResult,
     processingState, setProcessingState,
     taskStatusUrl, setTaskStatusUrl,
-    uploadedFiles,
   } = usePromptForge();
 
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
-  const [isLoginOpen, setIsLoginOpen] = useState(false);
   
+  // Use a ref to ensure polling intervals don't conflict or get redefined on re-renders
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const suggestionPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const [copied, setCopied] = useState(false);
+
+  const containerVariants = {
+    hidden: { opacity: 1 },
+    visible: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1,
+      },
+    },
+  };
+
+  const itemVariants = {
+    hidden: { y: 20, opacity: 0 },
+    visible: {
+      y: 0,
+      opacity: 1,
+    },
+  };
+
+  const getAuthHeaders = useCallback(() => {
+    const token = localStorage.getItem('auth_token');
+    return {
+      'Content-Type': 'application/json',
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+    };
+  }, []);
 
   const copyToClipboard = (text: string) => {
     if (!text) return;
@@ -160,18 +172,39 @@ export function PromptForgeClient() {
     }
   }, []);
 
+  const getTaskResult = useCallback(async (status_url: string): Promise<TaskStatusResponse> => {
+    try {
+      const response = await fetch(`${BACKEND_URL}${status_url}`, {
+        headers: getAuthHeaders(),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `Failed to get task status from ${status_url}.` }));
+        throw new Error(errorData.detail || `Failed to get task status from ${status_url}.`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error(`Error fetching task result from ${status_url}:`, error);
+      // Return a synthetic error response to be handled by the client
+      return {
+        task_id: status_url.split('/').pop() || 'unknown',
+        task_type: 'unknown',
+        status: 'FAILURE',
+        created_at: new Date().toISOString(),
+        error_message: getErrorMessage(error),
+      };
+    }
+  }, [getAuthHeaders]);
+
   const pollTaskStatus = useCallback((status_url: string, actionType: ActionType) => {
     const isSuggestionTask = actionType === 'suggest';
     
     stopPolling(isSuggestionTask ? 'suggestions' : 'main');
 
     const intervalId = setInterval(async () => {
-      if (!token) {
-        stopPolling(isSuggestionTask ? 'suggestions' : 'main');
-        return;
-      }
       try {
-        const task: TaskStatusResponse = await getTaskResult(status_url, token);
+        const task: TaskStatusResponse = await getTaskResult(status_url);
 
         const statusMap: { [key: string]: string } = {
           PENDING: 'Task is pending...',
@@ -193,10 +226,12 @@ export function PromptForgeClient() {
             if (actionType === 'generate' && 'initial_prompt' in (task.result as any)) {
                 const result = task.result as GenerateInitialPromptOutput;
                 setCurrentPrompt(result.initial_prompt);
+                if (isAuthenticated) addPrompt(result.initial_prompt);
             } else if (actionType === 'evaluate' && 'improved_prompt' in (task.result as any)) {
                 const result = task.result as EvaluateAndIteratePromptOutput;
                 setEvaluationResult(result);
                 setCurrentPrompt(result.improved_prompt);
+                if (isAuthenticated) addPrompt(result.improved_prompt);
             } else if (isSuggestionTask && Array.isArray(task.result)) {
                 const result = task.result as GeneratePromptSuggestionsOutput;
                 setSuggestions(result.map(s => s.description));
@@ -234,15 +269,17 @@ export function PromptForgeClient() {
     } else {
       pollingIntervalRef.current = intervalId;
     }
-  }, [stopPolling, setTaskStatusUrl, setProcessingState, toast, setCurrentPrompt, setEvaluationResult, setSuggestions, token]);
+  }, [stopPolling, setTaskStatusUrl, setProcessingState, toast, setCurrentPrompt, isAuthenticated, addPrompt, setEvaluationResult, setSuggestions, getTaskResult]);
 
+  // Effect to resume polling if the user navigates back to the page
   useEffect(() => {
     if (taskStatusUrl && processingState.activeAction) {
       pollTaskStatus(taskStatusUrl, processingState.activeAction);
     }
-  }, []); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only on initial mount
 
-
+  // Cleanup polling on component unmount
   useEffect(() => {
     return () => {
       stopPolling('main');
@@ -251,15 +288,25 @@ export function PromptForgeClient() {
   }, [stopPolling]);
   
   const onGetSuggestions = async (prompt: string, comments?: string) => {
-    if (!prompt || suggestionsLoading || !token) return;
+    if (!prompt || suggestionsLoading) return;
     setSuggestionsLoading(true);
     setSuggestions([]);
     try {
-      const task = await handleGetPromptSuggestions({
-        current_prompt: prompt,
-        user_comments: comments,
-        token,
+      const response = await fetch(`${BACKEND_URL}/prompts/suggest-improvements`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          current_prompt: prompt,
+          user_comments: comments,
+        }),
       });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to start suggestion task.' }));
+        throw new Error(errorData.detail || 'Failed to start suggestion task.');
+      }
+      
+      const task: TaskCreationResponse = await response.json();
       pollTaskStatus(task.status_url, 'suggest');
     } catch (error) {
       setSuggestionsLoading(false);
@@ -272,16 +319,23 @@ export function PromptForgeClient() {
       toast({ variant: 'destructive', title: 'Error', description: 'Please describe your assistant needs first.' });
       return;
     }
-    if (!token) {
-      toast({ variant: 'destructive', title: 'Error', description: 'Please sign in to generate prompts.' });
-      return;
-    }
     const action: ActionType = 'generate';
     setProcessingState({ activeAction: action, statusText: 'Starting generation task...' });
     setEvaluationResult(null);
     setSuggestions([]);
     try {
-      const task = await handleGenerateInitialPrompt({ user_needs: userNeeds, token });
+      const response = await fetch(`${BACKEND_URL}/prompts/generate`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ user_needs: userNeeds }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to start generation task.' }));
+        throw new Error(errorData.detail || 'Failed to start generation task.');
+      }
+      
+      const task: TaskCreationResponse = await response.json();
       setTaskStatusUrl(task.status_url);
       setProcessingState(prev => ({ ...prev, statusText: 'Task initiated, awaiting result...' }));
       pollTaskStatus(task.status_url, action);
@@ -296,23 +350,22 @@ export function PromptForgeClient() {
       toast({ variant: 'destructive', title: 'Error', description: 'A prompt and user needs are required for evaluation.' });
       return;
     }
-    if (!token) {
-      toast({ variant: 'destructive', title: 'Error', description: 'Please sign in to evaluate prompts.' });
-      return;
-    }
     const action: ActionType = 'evaluate';
     setProcessingState({ activeAction: action, statusText: 'Starting evaluation task...' });
     setEvaluationResult(null);
-
-    const docContext = uploadedFiles.length > 0 
-        ? `\n\n--- [DOCUMENT CONTEXT] ---\n${uploadedFiles.map(f => `## Document: ${f.name}\n\n${f.content}`).join('\n\n')}`
-        : '';
-    
-    const promptWithContext = `${currentPrompt}${docContext}`;
-
     try {
-      // Send the combined prompt and the original user needs
-      const task = await handleEvaluatePrompt({ prompt: promptWithContext, user_needs: userNeeds, token });
+      const response = await fetch(`${BACKEND_URL}/prompts/evaluate`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ prompt: currentPrompt, user_needs: userNeeds }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to start evaluation task.' }));
+        throw new Error(errorData.detail || 'Failed to start evaluation task.');
+      }
+      
+      const task: TaskCreationResponse = await response.json();
       setTaskStatusUrl(task.status_url);
       setProcessingState(prev => ({ ...prev, statusText: 'Task initiated, awaiting evaluation...' }));
       pollTaskStatus(task.status_url, action);
@@ -353,21 +406,21 @@ Selected Suggestions:
     );
   };
   
-  const onSubmitToLibrary = () => {
+  const onUploadToLibrary = () => {
     if (!currentPrompt) {
         toast({
             variant: 'destructive',
             title: 'Error',
-            description: 'There is no prompt to submit.',
+            description: 'There is no prompt to upload.',
         });
         return;
     }
-    if (!user || !token) {
-        toast({ variant: 'destructive', title: 'Authentication Error', description: 'You must be logged in to submit to the library.'});
-        setIsLoginOpen(true);
+    if (!userId) {
+        toast({ variant: 'destructive', title: 'Authentication Error', description: 'You must be logged in to upload to the library.'});
+        login();
         return;
     }
-    addLibrarySubmission(currentPrompt);
+    addLibraryPrompt(currentPrompt);
   };
 
   const handleCreateAssistant = () => {
@@ -375,12 +428,7 @@ Selected Suggestions:
       toast({ variant: 'destructive', title: 'Error', description: 'Please generate a prompt first.' });
       return;
     }
-    const docContext = uploadedFiles.length > 0 
-        ? `\n\n--- [DOCUMENT CONTEXT] ---\n${uploadedFiles.map(f => `## Document: ${f.name}\n\n${f.content}`).join('\n\n')}`
-        : '';
-    const finalPromptForCopy = `${currentPrompt}${docContext}`;
-
-    copyToClipboard(finalPromptForCopy);
+    copyToClipboard(currentPrompt);
     window.open('https://assistant.ai.it.ufl.edu/admin/assistants/new', '_blank', 'noopener,noreferrer');
     toast({
       title: 'Prompt Copied!',
@@ -391,51 +439,44 @@ Selected Suggestions:
   
   return (
     <TooltipProvider>
-      <motion.div
-        className="flex h-full flex-col gap-8"
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <motion.div variants={itemVariants}>
-          <Card>
-            <CardHeader>
-              <h2 className="text-lg font-medium leading-snug">1. Describe Your Assistant</h2>
-              <CardDescription>
-                What are the primary goals and functionalities of your AI assistant? This will be used to generate the initial prompt.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <Label htmlFor="user-needs" className="sr-only">User Needs</Label>
-                <Textarea
-                  id="user-needs"
-                  placeholder="e.g., An assistant that helps university students find course information, check deadlines, and book appointments with advisors..."
-                  value={userNeeds}
-                  onChange={(e) => setUserNeeds(e.target.value)}
-                  className="min-h-[120px]"
-                  disabled={!!processingState.activeAction}
-                />
-              </div>
-            </CardContent>
-            <CardFooter>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button onClick={onGenerate} disabled={!!processingState.activeAction || !userNeeds} variant="destructive">
-                    {processingState.activeAction === 'generate' ? <Loader2 className="animate-spin" /> : <Sparkles />}
-                    Generate Initial Prompt
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Generate a new prompt based on your needs.</p>
-                </TooltipContent>
-              </Tooltip>
-            </CardFooter>
-          </Card>
-        </motion.div>
+      <div className="flex h-full flex-col gap-8">
+        <Card>
+          <CardHeader>
+            <h2 className="text-lg font-medium leading-snug">1. Describe Your Assistant</h2>
+            <CardDescription>
+              What are the primary goals and functionalities of your AI assistant? This will be used to generate the initial prompt.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <Label htmlFor="user-needs" className="sr-only">User Needs</Label>
+              <Textarea
+                id="user-needs"
+                placeholder="e.g., An assistant that helps university students find course information, check deadlines, and book appointments with advisors..."
+                value={userNeeds}
+                onChange={(e) => setUserNeeds(e.target.value)}
+                className="min-h-[120px]"
+                disabled={!!processingState.activeAction}
+              />
+            </div>
+          </CardContent>
+          <CardFooter>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={onGenerate} disabled={!!processingState.activeAction || !userNeeds} variant="destructive">
+                  {processingState.activeAction === 'generate' ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                  Generate Initial Prompt
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Generate a new prompt based on your needs.</p>
+              </TooltipContent>
+            </Tooltip>
+          </CardFooter>
+        </Card>
 
         <div className="grid flex-1 grid-cols-1 gap-8 lg:grid-cols-2">
-          <motion.div className="flex flex-col gap-8" variants={itemVariants}>
+          <div className="flex flex-col gap-8">
             <Card>
               <CardHeader>
                 <h2 className="text-lg font-medium leading-snug">2. System Prompt & Context</h2>
@@ -475,9 +516,9 @@ Selected Suggestions:
               </CardContent>
             </Card>
             <DocumentManager />
-          </motion.div>
+          </div>
 
-          <motion.div className="flex flex-col gap-8" variants={itemVariants}>
+          <div className="flex flex-col gap-8">
             <AnimatePresence>
               {processingState.activeAction && (
                 <motion.div
@@ -616,61 +657,52 @@ Selected Suggestions:
                    </Button>
                  </div>
                 <div aria-live="polite" aria-atomic="true">
-                  <Dialog open={isLoginOpen} onOpenChange={setIsLoginOpen}>
-                    {user ? (
-                      evaluationResult ? (
-                      <div className="space-y-4">
-                        {evaluationResult.improvement_summary && (
-                          <div className="space-y-1">
-                            <h4 className="text-sm font-medium text-foreground">Improvement Summary</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {evaluationResult.improvement_summary}
-                            </p>
-                          </div>
-                        )}
-                        
-                        <Separator />
-
-                        <div className="space-y-2">
-                          <h4 className="text-sm font-medium text-foreground">Evaluation Scores</h4>
-                          <ul className="space-y-1.5">
-                            {(Object.keys(evaluationResult) as Array<keyof EvaluateAndIteratePromptOutput>)
-                              .filter(key => key.endsWith('_score'))
-                              .map((key) => {
-                                const score = evaluationResult[key] as number;
-                                return (
-                                  <li key={key} className="flex items-center justify-between">
-                                    <span className="text-sm text-muted-foreground">{formatMetricName(key)}</span>
-                                    {typeof score === 'number' ? (
-                                      <Badge variant={score > 0.7 ? 'default' : score > 0.4 ? 'secondary' : 'destructive'} className="w-16 justify-center">
-                                        {Math.round(score * 100)}%
-                                      </Badge>
-                                    ) : (
-                                      <Badge variant="secondary" className="w-16 justify-center">N/A</Badge>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                          </ul>
+                  {isAuthenticated && evaluationResult ? (
+                    <div className="space-y-4">
+                      {evaluationResult.improvement_summary && (
+                        <div className="space-y-1">
+                          <h4 className="text-sm font-medium text-foreground">Improvement Summary</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {evaluationResult.improvement_summary}
+                          </p>
                         </div>
+                      )}
+                      
+                      <Separator />
+
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium text-foreground">Evaluation Scores</h4>
+                        <ul className="space-y-1.5">
+                          {(Object.keys(evaluationResult) as Array<keyof EvaluateAndIteratePromptOutput>)
+                            .filter(key => key.endsWith('_score'))
+                            .map((key) => {
+                              const score = evaluationResult[key] as number;
+                              return (
+                                <li key={key} className="flex items-center justify-between">
+                                  <span className="text-sm text-muted-foreground">{formatMetricName(key)}</span>
+                                  {typeof score === 'number' ? (
+                                    <Badge variant={score > 0.7 ? 'default' : score > 0.4 ? 'secondary' : 'destructive'} className="w-16 justify-center">
+                                      {Math.round(score * 100)}%
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="w-16 justify-center">N/A</Badge>
+                                  )}
+                                </li>
+                              );
+                            })}
+                        </ul>
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border p-8 text-center">
-                          <p className="text-muted-foreground">Your evaluation results will appear here.</p>
-                      </div>
-                    )
-                    ) : (
-                      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border p-8 text-center">
-                        <p className="text-muted-foreground">
-                          Please sign in to view evaluation results.
-                        </p>
-                        <DialogTrigger asChild>
-                          <Button className='mt-4' onClick={() => login('student@ufl.edu')}>Sign In</Button>
-                        </DialogTrigger>
-                      </div>
-                    )}
-                     <MockLoginDialog onSuccess={() => setIsLoginOpen(false)} />
-                  </Dialog>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border p-8 text-center">
+                      <p className="text-muted-foreground">
+                        {isAuthenticated ? 'Your evaluation results will appear here.' : 'Please sign in to view evaluation results.'}
+                      </p>
+                      {!isAuthenticated && (
+                        <Button onClick={login} className='mt-4'>Sign In</Button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </CardContent>
               <CardFooter className="flex flex-col gap-2">
@@ -695,21 +727,21 @@ Selected Suggestions:
                       className="w-full"
                       variant="secondary"
                       disabled={!!processingState.activeAction || !currentPrompt}
-                      onClick={onSubmitToLibrary}
+                      onClick={onUploadToLibrary}
                     >
                       <Upload />
-                      Submit to Prompt Library
+                      Upload to Prompt Library
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Submit this prompt for admin review to be added to the public library.</p>
+                    <p>Share this prompt with the community by adding it to the public library.</p>
                   </TooltipContent>
                 </Tooltip>
               </CardFooter>
             </Card>
-          </motion.div>
+          </div>
         </div>
-      </motion.div>
+      </div>
     </TooltipProvider>
   );
 }

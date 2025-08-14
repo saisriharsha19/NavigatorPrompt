@@ -32,7 +32,7 @@ export default function SettingsLayout({
       <div className="flex min-h-screen w-full flex-col bg-background">
         <AppHeader />
         <div className="flex flex-1 overflow-hidden">
-          <aside className="hidden md:flex md:w-64 md:flex-col md:border-r">
+          <aside className="hidden w-64 flex-col border-r md:flex">
             <div className="flex flex-col gap-2 p-4 pt-8">
               <h2 className="text-lg font-semibold tracking-tight">Settings</h2>
             </div>
@@ -48,7 +48,7 @@ export default function SettingsLayout({
             <header className="sticky top-16 z-10 flex h-14 items-center gap-4 border-b bg-background px-4 md:hidden">
               <Sheet>
                 <SheetTrigger asChild>
-                  <Button variant="outline" size="icon">
+                  <Button variant="outline" size="icon" className="shrink-0">
                     <Menu className="h-5 w-5" />
                     <span className="sr-only">Toggle Settings Menu</span>
                   </Button>

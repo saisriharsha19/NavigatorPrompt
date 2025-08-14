@@ -1,146 +1,239 @@
-
 'use client';
 
-import * as React from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { useRouter } from 'next/navigation';
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+import * as React from 'react';
 
 type User = {
   id: string;
   email: string;
   username: string;
-  name: string;
+  name?: string;
   is_admin: boolean;
   is_student: boolean;
   is_faculty: boolean;
   is_staff: boolean;
 };
 
-type AuthContextType = {
+type AuthState = {
+  isAuthenticated: boolean;
   user: User | null;
-  token: string | null;
-  isAuthLoading: boolean;
-  login: (email: string) => Promise<boolean>;
-  logout: () => void;
+  isLoading: boolean;
+  error: string | null;
+};
+
+type AuthContextType = AuthState & {
+  userId: string | null;
+  isAdmin: boolean;
+  login: (email?: string) => Promise<void>;
+  logout: () => Promise<void>;
+  refreshSession: () => Promise<void>;
+  showLoginModal: boolean;
+  setShowLoginModal: (show: boolean) => void;
 };
 
 const AuthContext = React.createContext<AuthContextType | undefined>(undefined);
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = React.useState<User | null>(null);
-  const [token, setToken] = React.useState<string | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = React.useState(true);
+  const [authState, setAuthState] = React.useState<AuthState>({
+    isAuthenticated: false,
+    user: null,
+    isLoading: true,
+    error: null,
+  });
   const { toast } = useToast();
-  const router = useRouter();
 
-  const checkAuthStatus = React.useCallback(async () => {
-    setIsAuthLoading(true);
+  // Check for existing token and validate session
+  const checkExistingAuth = React.useCallback(async () => {
     try {
-        const storedToken = localStorage.getItem('auth_token');
-        const storedUser = localStorage.getItem('auth_user');
+      const token = localStorage.getItem('auth_token');
+      if (!token) {
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        return;
+      }
 
-        if (storedToken && storedUser) {
-            setToken(storedToken);
-            setUser(JSON.parse(storedUser));
+      const response = await fetch(`${BACKEND_URL}/auth/session`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const sessionData = await response.json();
+        if (sessionData.isAuthenticated && sessionData.user) {
+          setAuthState({
+            isAuthenticated: true,
+            user: sessionData.user,
+            isLoading: false,
+            error: null,
+          });
+          return;
         }
+      }
+
+      // Invalid token, remove it
+      localStorage.removeItem('auth_token');
+      setAuthState({
+        isAuthenticated: false,
+        user: null,
+        isLoading: false,
+        error: null,
+      });
     } catch (error) {
-        console.error("Failed to parse auth data from storage", error);
-        // Clear corrupted data
-        localStorage.removeItem('auth_user');
-        localStorage.removeItem('auth_token');
-        document.cookie = 'auth_token=; path=/; max-age=0;';
-        document.cookie = 'auth_token_payload=; path=/; max-age=0;';
-    } finally {
-        setIsAuthLoading(false);
+      console.error('Auth check failed:', error);
+      localStorage.removeItem('auth_token');
+      setAuthState({
+        isAuthenticated: false,
+        user: null,
+        isLoading: false,
+        error: 'Authentication check failed',
+      });
     }
   }, []);
 
+  // Initialize auth state on mount
   React.useEffect(() => {
-    checkAuthStatus();
-  }, [checkAuthStatus]);
-  
-  const login = async (email: string) => {
-    setIsAuthLoading(true);
+    checkExistingAuth();
+  }, [checkExistingAuth]);
+
+  const [showLoginModal, setShowLoginModal] = React.useState(false);
+
+  const login = React.useCallback(async (email?: string) => {
     try {
-        if (!BACKEND_URL) {
-            toast({
-                variant: 'destructive',
-                title: 'Configuration Error',
-                description: 'The backend service URL is not configured.',
-            });
-            return false;
-        }
-        
-        const response = await fetch(`${BACKEND_URL}/auth/mock/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email }),
-        });
+      setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Failed to sign in.');
-        }
+      // Check if SAML is available (production)
+      if (process.env.NODE_ENV === 'production' || process.env.NEXT_PUBLIC_USE_SAML === 'true') {
+        // Redirect to SAML login
+        window.location.href = `${BACKEND_URL}/auth/saml/login`;
+        return;
+      }
 
-        const data = await response.json();
-        
-        const userData: User = data.user;
+      // Development: Show modal if no email provided
+      if (!email) {
+        setAuthState(prev => ({ ...prev, isLoading: false }));
+        setShowLoginModal(true);
+        return;
+      }
 
-        setUser(userData);
-        setToken(data.access_token);
-        localStorage.setItem('auth_user', JSON.stringify(userData));
+      // Development: Use mock login with provided email
+      const response = await fetch(`${BACKEND_URL}/auth/mock/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: email }), // Fix: ensure email is a string
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Login failed');
+      }
+
+      const data = await response.json();
+      
+      if (data.success && data.access_token) {
         localStorage.setItem('auth_token', data.access_token);
-        
-        const cookieOptions = `path=/; max-age=86400; samesite=lax`;
-        document.cookie = `auth_token=${data.access_token}; ${cookieOptions}`;
-        document.cookie = `auth_token_payload=${encodeURIComponent(JSON.stringify(userData))}; ${cookieOptions}`;
-
-        toast({
-            title: 'Signed In',
-            description: `Welcome, ${userData.name}!`,
+        setAuthState({
+          isAuthenticated: true,
+          user: data.user,
+          isLoading: false,
+          error: null,
         });
 
-        router.push('/');
-        router.refresh();
-        return true;
-
+        toast({
+          title: 'Signed In Successfully',
+          description: `Welcome back, ${data.user.name || data.user.username}!`,
+        });
+      } else {
+        throw new Error('Invalid response from server');
+      }
     } catch (error: any) {
-        toast({
-            variant: 'destructive',
-            title: 'Sign In Failed',
-            description: error.message,
-        });
-        setUser(null);
-        setToken(null);
-        localStorage.removeItem('auth_user');
-        localStorage.removeItem('auth_token');
-        document.cookie = 'auth_token=; path=/; max-age=0;';
-        document.cookie = 'auth_token_payload=; path=/; max-age=0;';
-        return false;
-    } finally {
-        setIsAuthLoading(false);
-    }
-  };
+      console.error('Login failed:', error);
+      setAuthState({
+        isAuthenticated: false,
+        user: null,
+        isLoading: false,
+        error: error.message || 'Login failed',
+      });
 
-  const logout = () => {
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem('auth_user');
-    localStorage.removeItem('auth_token');
-    document.cookie = 'auth_token=; path=/; max-age=0;';
-    document.cookie = 'auth_token_payload=; path=/; max-age=0;';
-    toast({
-      title: 'Signed Out',
-      description: 'You have been successfully signed out.',
-    });
-    router.push('/');
-    router.refresh();
+      toast({
+        variant: 'destructive',
+        title: 'Sign In Failed',
+        description: error.message || 'Unable to sign in. Please try again.',
+      });
+    }
+  }, [toast]);
+
+  const logout = React.useCallback(async () => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      
+      // Call backend logout endpoint if token exists
+      if (token) {
+        try {
+          await fetch(`${BACKEND_URL}/auth/logout`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          });
+        } catch (error) {
+          // Ignore logout endpoint errors, proceed with local cleanup
+          console.warn('Backend logout failed:', error);
+        }
+      }
+
+      // Clear local storage and state
+      localStorage.removeItem('auth_token');
+      setAuthState({
+        isAuthenticated: false,
+        user: null,
+        isLoading: false,
+        error: null,
+      });
+
+      toast({
+        title: 'Signed Out',
+        description: 'You have been signed out successfully.',
+      });
+    } catch (error: any) {
+      console.error('Logout error:', error);
+      // Still clear local state even if logout call fails
+      localStorage.removeItem('auth_token');
+      setAuthState({
+        isAuthenticated: false,
+        user: null,
+        isLoading: false,
+        error: null,
+      });
+    }
+  }, [toast]);
+
+  const refreshSession = React.useCallback(async () => {
+    await checkExistingAuth();
+  }, [checkExistingAuth]);
+
+  // Derive computed values
+  const userId = authState.user?.id || null;
+  const isAdmin = authState.user?.is_admin || false;
+
+  const contextValue: AuthContextType = {
+    ...authState,
+    userId,
+    isAdmin,
+    login,
+    logout,
+    refreshSession,
+    showLoginModal,
+    setShowLoginModal,
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthLoading, login, logout }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

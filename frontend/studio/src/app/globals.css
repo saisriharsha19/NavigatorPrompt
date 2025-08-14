@@ -99,3 +99,58 @@
     border-width: 0;
   }
 }
+
+
+/* Mobile-first responsive improvements */
+@media (max-width: 640px) {
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  
+  /* Improve card spacing on mobile */
+  .card-mobile {
+    margin-bottom: 1rem;
+  }
+  
+  /* Better touch targets */
+  button, .button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* Improve text readability on mobile */
+  .text-sm {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+  
+  /* Better modal spacing on mobile */
+  .modal-content {
+    margin: 1rem;
+    max-height: calc(100vh - 2rem);
+  }
+  
+  /* Improve form elements on mobile */
+  input, textarea, select {
+    font-size: 16px; /* Prevents zoom on iOS */
+  }
+}
+
+/* Improve scrolling on mobile */
+.scroll-smooth {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Better focus states for mobile */
+@media (hover: none) and (pointer: coarse) {
+  .hover.bg-accent:hover {
+    background-color: transparent;
+  }
+  
+  .focus.bg-accent:focus,
+  .active.bg-accent:active {
+    background-color: hsl(var(--accent));
+  }
+}
