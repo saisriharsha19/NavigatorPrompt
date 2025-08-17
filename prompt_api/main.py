@@ -29,13 +29,26 @@ from celery_worker import (
     evaluate_prompt_task,
     generate_suggestions_task,
     analyze_and_tag_task,
-    analyze_submission_task
+    analyze_submission_task,
+    add_to_library_task
 )
-
-
+from sqlalchemy import text
+# Import security and rate limiting
+from dev_security import safe_input_validation, safe_file_validation
+from middleware import AdvancedRateLimitMiddleware, SecurityHeadersMiddleware
+from rate_limiter import get_rate_limiter
+from models import HistoryPrompt
+# prompt_api/main.py - Add this at the top after imports
 # --- Logging Middleware ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+import hashlib
+
+def obscure_user_id(user_id: str) -> str:
+    """Hash user_id so it can't be reverse engineered"""
+    return hashlib.sha256(f"salt_{user_id}_navigator".encode()).hexdigest()[:12]
+
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -161,6 +174,17 @@ class LibrarySubmissionResponse(BaseModel):
     tags: Optional[List[str]] = None
     user_email: Optional[str] = None
 
+class HistoryPromptResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    userId: str = Field(alias="user_id")  # Map user_id to userId for frontend compatibility
+    text: str
+    createdAt: datetime = Field(alias="created_at")  # Map created_at to createdAt
+
+class AddHistoryPromptRequest(BaseModel):
+    prompt_text: str
+    user_id: str
+
 class AdminReviewRequest(BaseModel):
     action: str  # "approve" or "reject"
     admin_notes: Optional[str] = None
@@ -168,6 +192,10 @@ class AdminReviewRequest(BaseModel):
 class InitialGenerationRequest(BaseModel):
     user_needs: str
     deepeval_context: Optional[str] = None
+
+class AddLibraryPromptRequest(BaseModel):
+    prompt_text: str
+    user_id: str
 
 class EvaluationRequest(BaseModel):
     prompt: str
@@ -230,10 +258,11 @@ class AnalysisResponse(BaseModel):
 class TaskStatusResponse(BaseTaskResponse):
     result: Optional[Union[GeneratedPromptResponse, EvaluationResponse, List[SuggestionResponse], AnalysisResponse, "LibraryPromptResponse"]] = None
 
+# prompt_api/main.py - Change this line in LibraryPromptResponse
 class LibraryPromptResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
-    user_id: uuid.UUID
+    user_id: str  # Change from UUID to str to accept hashed values
     text: str
     created_at: datetime
     summary: Optional[str] = None
@@ -281,13 +310,18 @@ app = FastAPI(
     version="3.0.0"
 )
 
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(AdvancedRateLimitMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 origins = [
     "http://localhost.tiangolo.com",
     "https://localhost.tiangolo.com",
     "http://localhost",
     "http://localhost:8080",
-    "*"
+    "http://localhost:3000",
+    "http://127.0.0.1:3000", 
+    "http://10.51.30.157:3000",  # Your actual frontend IP
+    "http://10.51.30.157:8000"
 ]
 
 app.add_middleware(
@@ -296,11 +330,28 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+    "X-RateLimit-Limit", 
+    "X-RateLimit-Remaining", 
+    "X-RateLimit-Reset",
+    "X-RateLimit-Window",
+    "Retry-After"
+    ]
 )
 @app.on_event("startup")
 async def startup_event():
-    # Don't auto-create tables since we're using migrations
-    pass
+    """Initialize database and rate limiter"""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    
+    # Initialize rate limiter
+    rate_limiter = get_rate_limiter()
+    logger.info("Application startup complete with Redis rate limiting")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    logger.info("Application shutting down")
 
 # --- Authentication Endpoints ---
 
@@ -915,6 +966,67 @@ async def get_admin_stats(
 
 # --- User Endpoints ---
 
+@app.get("/history/prompts", response_model=List[HistoryPromptResponse], tags=["History"])
+async def get_history_prompts(user_id: str = Query(...), db: AsyncSession = Depends(get_db)):
+    """Get user's prompt history (top 20 most recent)."""
+    prompts = (await db.execute(
+        select(HistoryPrompt)
+        .where(HistoryPrompt.user_id == user_id)
+        .order_by(HistoryPrompt.created_at.desc())
+        .limit(20)
+    )).scalars().all()
+    
+    return [HistoryPromptResponse.model_validate(prompt, from_attributes=True) for prompt in prompts]
+
+@app.post("/history/prompts", response_model=HistoryPromptResponse, tags=["History"])
+async def add_history_prompt(request: AddHistoryPromptRequest, db: AsyncSession = Depends(get_db)):
+    """Add a prompt to user's history, maintaining max 20 prompts."""
+    
+    # Check current count
+    count_result = await db.execute(
+        select(func.count(HistoryPrompt.id)).where(HistoryPrompt.user_id == request.user_id)
+    )
+    current_count = count_result.scalar()
+    
+    # If at limit, delete oldest
+    if current_count >= 20:
+        oldest = (await db.execute(
+            select(HistoryPrompt)
+            .where(HistoryPrompt.user_id == request.user_id)
+            .order_by(HistoryPrompt.created_at.asc())
+            .limit(1)
+        )).scalar_one_or_none()
+        
+        if oldest:
+            await db.delete(oldest)
+    
+    # Add new prompt
+    new_prompt = HistoryPrompt(
+        user_id=request.user_id,
+        text=request.prompt_text
+    )
+    db.add(new_prompt)
+    await db.commit()
+    await db.refresh(new_prompt)
+    
+    return HistoryPromptResponse.model_validate(new_prompt, from_attributes=True)
+
+@app.delete("/history/prompts/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["History"])
+async def delete_history_prompt(prompt_id: uuid.UUID, user_id: str = Query(...), db: AsyncSession = Depends(get_db)):
+    """Delete a prompt from user's history."""
+    prompt = (await db.execute(
+        select(HistoryPrompt)
+        .where(HistoryPrompt.id == prompt_id, HistoryPrompt.user_id == user_id)
+    )).scalar_one_or_none()
+    
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found or access denied")
+    
+    await db.delete(prompt)
+    await db.commit()
+    return None
+
+
 @app.get("/user/prompts", response_model=List[UserPromptResponse], tags=["User"])
 async def get_user_prompt_history(
     current_user: User = Depends(get_current_user),
@@ -997,221 +1109,297 @@ async def get_user_submissions(
     return [LibrarySubmissionResponse.model_validate(sub) for sub in submissions]
 
 # --- Library Endpoints (Updated) ---
-
+# prompt_api/main.py - Replace get_library_prompts function
 @app.get("/library/prompts", response_model=List[LibraryPromptResponse], tags=["Library"])
-async def get_library_prompts(
-    user_id: Optional[str] = Query(None), 
-    db: AsyncSession = Depends(get_db)
-):
-    """Get approved library prompts"""
+async def get_library_prompts(user_id: Optional[str] = Query(None), db: AsyncSession = Depends(get_db)):
+    # Keep library PUBLIC - show ALL prompts to everyone
     prompts = (await db.execute(
-        select(LibraryPrompt).options(selectinload(LibraryPrompt.stars)).order_by(LibraryPrompt.created_at.desc())
+        select(LibraryPrompt)
+        .options(selectinload(LibraryPrompt.stars))
+        .order_by(LibraryPrompt.created_at.desc())
     )).scalars().all()
     
     response_prompts = []
     for prompt in prompts:
-        # Check if user_id is a valid UUID before comparing
-        is_starred_by_user = False
-        if user_id:
-            try:
-                # Try to parse as UUID to validate
-                user_uuid = uuid.UUID(user_id)
-                is_starred_by_user = any(star.user_id == user_uuid for star in prompt.stars)
-            except ValueError:
-                # Invalid UUID format, skip star check
-                is_starred_by_user = False
-        
-        # Ensure prompt.user_id is a valid UUID, if not skip this prompt or handle gracefully
-        try:
-            prompt_user_id = prompt.user_id if isinstance(prompt.user_id, uuid.UUID) else uuid.UUID(str(prompt.user_id))
-        except (ValueError, TypeError):
-            # Skip prompts with invalid user_id
-            continue
-            
         response_prompts.append(
             LibraryPromptResponse(
                 id=prompt.id, 
-                user_id=prompt_user_id, 
+                user_id=obscure_user_id(prompt.user_id),  # OBSCURE user_id for privacy
                 text=prompt.text,
                 created_at=prompt.created_at, 
                 summary=prompt.summary, 
                 tags=prompt.tags,
                 stars=len(prompt.stars),
-                is_starred_by_user=is_starred_by_user
+                is_starred_by_user=any(star.user_id == user_id for star in prompt.stars) if user_id else False
             )
         )
     
     response_prompts.sort(key=lambda p: p.stars, reverse=True)
     return response_prompts
 
+@app.post("/library/prompts", response_model=TaskCreationResponse, status_code=status.HTTP_202_ACCEPTED, tags=["Library"])
+async def add_library_prompt(request: AddLibraryPromptRequest, db: AsyncSession = Depends(get_db)):
+    """Add prompt to library with validation and rate limiting applied"""
+    validated_text = safe_input_validation(request.prompt_text, max_length=50000)
+    
+    existing = await db.execute(select(LibraryPrompt).where(LibraryPrompt.text == validated_text))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="This prompt is already in the library.")
+
+    new_task = Task(task_type="add_to_library")
+    db.add(new_task)
+    await db.commit()
+    await db.refresh(new_task)
+    
+    task_data = {"prompt_text": validated_text, "user_id": request.user_id}
+    add_to_library_task.delay(str(new_task.id), task_data)
+    return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
+
 @app.delete("/library/prompts/{prompt_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Library"])
-async def delete_library_prompt(
-    prompt_id: uuid.UUID, 
-    _: bool = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Delete a library prompt (admin only)"""
+async def delete_library_prompt(prompt_id: uuid.UUID, user_id: str = Query(...), db: AsyncSession = Depends(get_db)):
     prompt = await db.get(LibraryPrompt, prompt_id)
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found.")
+    if prompt.user_id != user_id:
+        raise HTTPException(status_code=403, detail="You can only delete your own prompts.")
     await db.delete(prompt)
     await db.commit()
+    return None
 
+# prompt_api/main.py - FIX the toggle_star endpoint to handle type conversion
+# prompt_api/main.py - REPLACE the toggle_star_for_prompt function completely
 @app.post("/library/prompts/{prompt_id}/toggle-star", tags=["Library"])
-async def toggle_star_for_prompt(
-    prompt_id: uuid.UUID, 
-    request: ToggleStarRequest, 
-    db: AsyncSession = Depends(get_db)
-):
-    """Toggle star for a library prompt"""
-    prompt = await db.get(LibraryPrompt, prompt_id)
-    if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found.")
-
-    # Validate user_id is a valid UUID
+async def toggle_star_for_prompt(prompt_id: uuid.UUID, request: ToggleStarRequest, db: AsyncSession = Depends(get_db)):
+    """Toggle star with proper transaction handling and type safety"""
     try:
-        user_uuid = uuid.UUID(request.user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+        # Check if prompt exists first
+        prompt = await db.get(LibraryPrompt, prompt_id)
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Prompt not found.")
 
-    stmt = select(PromptStar).where(
-        PromptStar.prompt_id == prompt_id, 
-        PromptStar.user_id == user_uuid
-    )
-    existing_star = (await db.execute(stmt)).scalar_one_or_none()
+        user_id_str = str(request.user_id)  # Ensure it's a string
+        
+        # Use raw SQL to avoid SQLAlchemy type confusion
+        # First, check if star exists
+        check_query = text("""
+            SELECT id FROM prompt_stars 
+            WHERE prompt_id = :prompt_id AND user_id = :user_id
+        """)
+        
+        result = await db.execute(check_query, {
+            "prompt_id": str(prompt_id), 
+            "user_id": user_id_str
+        })
+        existing_star_id = result.scalar_one_or_none()
+        
+        if existing_star_id:
+            # Unstar - delete existing star
+            delete_query = text("""
+                DELETE FROM prompt_stars 
+                WHERE prompt_id = :prompt_id AND user_id = :user_id
+            """)
+            await db.execute(delete_query, {
+                "prompt_id": str(prompt_id), 
+                "user_id": user_id_str
+            })
+            await db.commit()
+            logger.info(f"User {user_id_str} unstarred prompt {prompt_id}")
+            return {"success": True, "action": "unstarred"}
+        else:
+            # Star - create new star
+            insert_query = text("""
+                INSERT INTO prompt_stars (id, prompt_id, user_id) 
+                VALUES (gen_random_uuid(), :prompt_id, :user_id)
+            """)
+            await db.execute(insert_query, {
+                "prompt_id": str(prompt_id), 
+                "user_id": user_id_str
+            })
+            await db.commit()
+            logger.info(f"User {user_id_str} starred prompt {prompt_id}")
+            return {"success": True, "action": "starred"}
+            
+    except Exception as e:
+        logger.error(f"Error in toggle_star_for_prompt: {e}", exc_info=True)
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to toggle star")
 
-    if existing_star:
-        await db.delete(existing_star)
-        await db.commit()
-        return {"success": True, "action": "unstarred"}
-    else:
-        new_star = PromptStar(prompt_id=prompt_id, user_id=user_uuid)
-        db.add(new_star)
-        await db.commit()
-        return {"success": True, "action": "starred"}
-
-# --- Existing Prompt Endpoints (Updated with User Tracking) ---
-
+# AI-powered endpoints with rate limiting automatically applied
 @app.post("/prompts/generate", response_model=TaskCreationResponse, status_code=status.HTTP_202_ACCEPTED, tags=["Prompt Generation"])
-async def generate_new_prompt(
-    request: InitialGenerationRequest, 
-    current_user: Optional[User] = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Generate a new prompt"""
-    new_task = Task(
-        task_type="initial_generation",
-        user_id=current_user.id if current_user else None
-    )
-    db.add(new_task)
-    await db.commit()
-    await db.refresh(new_task)
-    create_initial_prompt_task.delay(str(new_task.id), request.model_dump())
-    return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
+async def generate_new_prompt(request: InitialGenerationRequest, db: AsyncSession = Depends(get_db)):
+   """Generate new prompt with security validation and rate limiting"""
+   validated_needs = safe_input_validation(request.user_needs, max_length=5000)
+   
+   new_task = Task(task_type="initial_generation")
+   db.add(new_task)
+   await db.commit()
+   await db.refresh(new_task)
+   
+   task_data = {
+       "user_needs": validated_needs,
+       "deepeval_context": request.deepeval_context
+   }
+   create_initial_prompt_task.delay(str(new_task.id), task_data)
+   return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
 
 @app.post("/prompts/evaluate", response_model=TaskCreationResponse, status_code=status.HTTP_202_ACCEPTED, tags=["Prompt Evaluation"])
-async def evaluate_existing_prompt(
-    request: EvaluationRequest, 
-    current_user: Optional[User] = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Evaluate an existing prompt"""
-    new_task = Task(
-        task_type="evaluation_and_improvement",
-        user_id=current_user.id if current_user else None
-    )
-    db.add(new_task)
-    await db.commit()
-    await db.refresh(new_task)
-    evaluate_prompt_task.delay(str(new_task.id), request.model_dump())
-    return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
+async def evaluate_existing_prompt(request: EvaluationRequest, db: AsyncSession = Depends(get_db)):
+   """Evaluate prompt with security validation and rate limiting"""
+   validated_prompt = safe_input_validation(request.prompt, max_length=50000)
+   validated_needs = safe_input_validation(request.user_needs, max_length=5000)
+   
+   new_task = Task(task_type="evaluation_and_improvement")
+   db.add(new_task)
+   await db.commit()
+   await db.refresh(new_task)
+   
+   task_data = {
+       "prompt": validated_prompt,
+       "user_needs": validated_needs,
+       "retrieved_content": request.retrieved_content,
+       "ground_truths": request.ground_truths
+   }
+   evaluate_prompt_task.delay(str(new_task.id), task_data)
+   return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
 
 @app.post("/prompts/suggest-improvements", response_model=TaskCreationResponse, status_code=status.HTTP_202_ACCEPTED, tags=["Prompt Optimization"])
-async def get_improvement_suggestions(
-    request: SuggestionRequest, 
-    current_user: Optional[User] = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get improvement suggestions for a prompt"""
-    new_task = Task(
-        task_type="suggestion_generation",
-        user_id=current_user.id if current_user else None
-    )
-    db.add(new_task)
-    await db.commit()
-    await db.refresh(new_task)
-    generate_suggestions_task.delay(str(new_task.id), request.model_dump())
-    return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
+async def get_improvement_suggestions(request: SuggestionRequest, db: AsyncSession = Depends(get_db)):
+   """Get suggestions with security validation and rate limiting"""
+   validated_prompt = safe_input_validation(request.current_prompt, max_length=50000)
+   
+   new_task = Task(task_type="suggestion_generation")
+   db.add(new_task)
+   await db.commit()
+   await db.refresh(new_task)
+   
+   task_data = {
+       "current_prompt": validated_prompt,
+       "user_comments": request.user_comments,
+       "retrieved_content": request.retrieved_content
+   }
+   generate_suggestions_task.delay(str(new_task.id), task_data)
+   return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
 
 @app.post("/prompts/analyze-and-tag", response_model=TaskCreationResponse, status_code=status.HTTP_202_ACCEPTED, tags=["Prompt Analysis"])
-async def analyze_and_tag_prompt(
-    request: AnalysisRequest, 
-    current_user: Optional[User] = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Analyze and tag a prompt"""
-    new_task = Task(
-        task_type="analysis_and_tagging",
-        user_id=current_user.id if current_user else None
-    )
-    db.add(new_task)
-    await db.commit()
-    await db.refresh(new_task)
-    analyze_and_tag_task.delay(str(new_task.id), request.model_dump())
-    return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
+async def analyze_and_tag_prompt(request: AnalysisRequest, db: AsyncSession = Depends(get_db)):
+   """Analyze prompt with security validation and rate limiting"""
+   validated_text = safe_input_validation(request.prompt_text, max_length=50000)
+   
+   new_task = Task(task_type="analysis_and_tagging")
+   db.add(new_task)
+   await db.commit()
+   await db.refresh(new_task)
+   
+   task_data = {
+       "prompt_text": validated_text,
+       "targeted_context": request.targeted_context
+   }
+   analyze_and_tag_task.delay(str(new_task.id), task_data)
+   return TaskCreationResponse(task_id=new_task.id, status_url=f"/tasks/{new_task.id}")
 
 @app.get("/tasks/{task_id}", response_model=TaskStatusResponse, tags=["Task Management"])
 async def get_task_status(task_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Get task status and results"""
-    stmt = select(Task).where(Task.id == task_id).options(
-        selectinload(Task.generated_prompt),
-        selectinload(Task.prompt_evaluation),
-        selectinload(Task.prompt_suggestions),
-        selectinload(Task.prompt_analysis),
-        selectinload(Task.library_prompt)
-    )
-    task = (await db.execute(stmt)).scalar_one_or_none()
+   """Get task status with automatic rate limiting"""
+   stmt = select(Task).where(Task.id == task_id).options(
+       selectinload(Task.generated_prompt),
+       selectinload(Task.prompt_evaluation),
+       selectinload(Task.prompt_suggestions),
+       selectinload(Task.prompt_analysis),
+       selectinload(Task.library_prompt) 
+   )
+   task = (await db.execute(stmt)).scalar_one_or_none()
 
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+   if not task:
+       raise HTTPException(status_code=404, detail="Task not found")
 
-    response_data = {
-        "task_id": task.id, 
-        "task_type": task.task_type, 
-        "status": task.status,
-        "created_at": task.created_at.isoformat(),
-        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-        "error_message": task.error_message, 
-        "result": None
+   response_data = {
+       "task_id": task.id, "task_type": task.task_type, "status": task.status,
+       "created_at": task.created_at.isoformat(),
+       "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+       "error_message": task.error_message, "result": None
+   }
+
+   if task.status == "SUCCESS":
+       if task.task_type == "initial_generation" and task.generated_prompt:
+           response_data["result"] = GeneratedPromptResponse.from_orm(task.generated_prompt)
+       elif task.task_type == "evaluation_and_improvement" and task.prompt_evaluation:
+           response_data["result"] = EvaluationResponse.from_orm(task.prompt_evaluation)
+       elif task.task_type == "suggestion_generation" and task.prompt_suggestions:
+           response_data["result"] = [SuggestionResponse.from_orm(s) for s in task.prompt_suggestions]
+       elif task.task_type == "analysis_and_tagging" and task.prompt_analysis:
+           analysis = task.prompt_analysis
+           response_data["result"] = AnalysisResponse.from_orm(analysis)
+       elif task.task_type == "add_to_library" and task.library_prompt:
+            library_result = LibraryPromptResponse.from_orm(task.library_prompt)
+            library_result.user_id = obscure_user_id(task.library_prompt.user_id)
+            response_data["result"] = library_result
+
+
+   return TaskStatusResponse(**response_data)
+
+# Admin endpoints for rate limit management
+@app.post("/admin/rate-limits/reset", tags=["Admin"])
+async def reset_rate_limits(request: Request):
+   """Reset rate limits for a specific client (admin only)"""
+   # TODO: Add proper admin authentication
+   rate_limiter = get_rate_limiter()
+   success = await rate_limiter.reset_client_limits(request)
+   
+   if success:
+       return {"message": "Rate limits reset successfully"}
+   else:
+       raise HTTPException(status_code=500, detail="Failed to reset rate limits")
+
+@app.get("/admin/rate-limits/stats", tags=["Admin"])
+async def get_global_rate_limit_stats():
+   """Get global rate limiting statistics (admin only)"""
+   # TODO: Add proper admin authentication
+   rate_limiter = get_rate_limiter()
+   
+   if not rate_limiter.redis_client:
+       return {"error": "Redis not available", "mode": "memory_fallback"}
+   
+   try:
+       # Get Redis info
+       info = rate_limiter.redis_client.info()
+       
+       # Get all rate limit keys
+       pattern = "requests:rate_limit:*"
+       keys = rate_limiter.redis_client.keys(pattern)
+       
+       stats = {
+           "redis_connected": True,
+           "total_clients": len(keys),
+           "redis_memory_usage": info.get("used_memory_human", "unknown"),
+           "redis_connected_clients": info.get("connected_clients", 0),
+           "rate_limiting_enabled": settings.RATE_LIMIT_ENABLED,
+           "default_limits": {
+               "limit": settings.DEFAULT_RATE_LIMIT,
+               "window": settings.DEFAULT_WINDOW_SECONDS
+           }
+       }
+       
+       return stats
+       
+   except Exception as e:
+       return {"error": str(e), "redis_connected": False}
+# ADD: Health check endpoint
+@app.get("/health", tags=["System"])
+async def health_check():
+    """Health check endpoint (not rate limited)"""
+    rate_limiter = get_rate_limiter()
+    redis_status = "connected" if rate_limiter.redis_client else "fallback"
+    
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "rate_limiter": redis_status
     }
 
-    if task.status == "SUCCESS":
-        if task.task_type == "initial_generation" and task.generated_prompt:
-            response_data["result"] = GeneratedPromptResponse.model_validate(task.generated_prompt)
-        elif task.task_type == "evaluation_and_improvement" and task.prompt_evaluation:
-            response_data["result"] = EvaluationResponse.model_validate(task.prompt_evaluation)
-        elif task.task_type == "suggestion_generation" and task.prompt_suggestions:
-            response_data["result"] = [SuggestionResponse.model_validate(s) for s in task.prompt_suggestions]
-        elif task.task_type == "analysis_and_tagging" and task.prompt_analysis:
-            analysis = task.prompt_analysis
-            response_data["result"] = AnalysisResponse(
-                summary=analysis.summary,
-                tags=analysis.tags or [],
-                quality_indicators={
-                    "clarity": analysis.clarity,
-                    "bias_risk": analysis.bias_risk,
-                    "safety_level": analysis.safety_level,
-                    "completeness": analysis.completeness,
-                    "professional_grade": analysis.professional_grade
-                },
-                category_analysis={
-                    "primary_domain": analysis.primary_domain,
-                    "main_purpose": analysis.main_purpose,
-                    "target_audience": analysis.target_audience,
-                    "complexity_level": analysis.complexity_level
-                }
-            )
-        elif task.task_type == "add_to_library" and task.library_prompt:
-            response_data["result"] = LibraryPromptResponse.model_validate(task.library_prompt)
-
-    return TaskStatusResponse(**response_data)
+# ADD: Rate limit status endpoint
+@app.get("/rate-limit-status", tags=["System"])
+async def get_rate_limit_status(request: Request):
+    """Get current rate limit status for client"""
+    rate_limiter = get_rate_limiter()
+    stats = await rate_limiter.get_stats(request)
+    return stats

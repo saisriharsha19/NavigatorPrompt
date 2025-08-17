@@ -57,6 +57,119 @@ def extract_json_from_response(llm_content: str) -> str:
     return llm_content
 
 
+@celery_app.task(name="tasks.add_to_library")
+def add_to_library_task(task_id: str, request_data: dict):
+    """
+    Full workflow to analyze a prompt and add it to the library.
+    This task combines prompt analysis and library storage.
+    """
+    logger.info(f"Executing add_to_library_task for task_id: {task_id}")
+    
+    async def run_task():
+        session = AsyncSessionLocal()
+        try:
+            # Get the task record
+            task = await session.get(Task, task_id)
+            if not task:
+                logger.error(f"Task {task_id} not found.")
+                return
+
+            prompt_text = request_data.get("prompt_text")
+            user_id = request_data.get("user_id")
+
+            if not prompt_text or not user_id:
+                raise ValueError("Missing prompt_text or user_id in request data")
+
+            logger.info(f"Processing prompt for library addition: {len(prompt_text)} characters")
+
+            # Step 1: Analyze the prompt using the analysis template
+            analysis_template = PROMPT_TEMPLATES["analysis_and_tagging"]
+            formatted_prompt = analysis_template["template"].format(
+                promptText=prompt_text, 
+                targetedContext=""
+            )
+            
+            # Make request to LLM API
+            headers = {
+                "Authorization": f"Bearer {settings.API_KEY}", 
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": settings.MODEL_NAME, 
+                "messages": [{"role": "user", "content": formatted_prompt}]
+            }
+
+            logger.info("Sending analysis request to LLM API")
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(settings.BASE_URL, json=payload, headers=headers)
+                response.raise_for_status()
+
+            # Process LLM response
+            response_data = response.json()
+            llm_content = response_data["choices"][0]["message"]["content"]
+            
+            logger.info(f"Received LLM analysis response: {len(llm_content)} characters")
+            
+            # Extract and parse JSON from response
+            cleaned_content = extract_json_from_response(llm_content)
+            try:
+                analysis_json = json.loads(cleaned_content)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM response as JSON: {e}")
+                logger.error(f"Raw content: {cleaned_content}")
+                # Create a fallback analysis
+                analysis_json = {
+                    "summary": "AI-generated prompt",
+                    "tags": ["general", "ai-generated"],
+                    "qualityIndicators": {},
+                    "categoryAnalysis": {}
+                }
+            
+            # Step 2: Create the library prompt with analysis results
+            new_prompt = LibraryPrompt(
+                user_id=user_id,
+                text=prompt_text,
+                summary=analysis_json.get("summary", "AI-generated prompt"),
+                tags=analysis_json.get("tags", ["general"]),
+                task_id=task_id  # Link back to the creation task
+            )
+            
+            session.add(new_prompt)
+            
+            # Update task status
+            task.status = "SUCCESS"
+            task.completed_at = datetime.utcnow()
+            
+            # Commit all changes
+            await session.commit()
+            await session.refresh(new_prompt)
+            
+            logger.info(f"Successfully added prompt {new_prompt.id} to library for user {user_id}")
+            logger.info(f"Task {task_id} (add_to_library) completed successfully.")
+
+        except Exception as e:
+            logger.error(f"Error in add_to_library_task {task_id}: {e}", exc_info=True)
+            await session.rollback()
+            
+            # Update task with error status
+            try:
+                async with AsyncSessionLocal() as error_session:
+                    task_to_update = await error_session.get(Task, task_id)
+                    if task_to_update:
+                        task_to_update.status = "FAILURE"
+                        task_to_update.error_message = str(e)
+                        task_to_update.completed_at = datetime.utcnow()
+                        await error_session.commit()
+            except Exception as update_error:
+                logger.error(f"Failed to update task error status: {update_error}")
+                
+        finally:
+            await session.close()
+
+    # Run the async task
+    asyncio.run(run_task())
+
+
 async def manage_user_prompt_history(user_id: str, prompt_text: str, task_type: str, session):
     """
     Manages user's prompt history, keeping only top 20 most recent prompts.

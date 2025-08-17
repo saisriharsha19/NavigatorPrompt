@@ -40,7 +40,10 @@ class Settings:
     
     # Caching
     ENABLE_CACHING = os.getenv("ENABLE_CACHING", "true").lower() == "true"
-    
+    RATE_LIMIT_REDIS_URL = os.getenv("RATE_LIMIT_REDIS_URL", "redis://localhost:6379/1")
+    RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+    DEFAULT_RATE_LIMIT = int(os.getenv("DEFAULT_RATE_LIMIT", "20"))
+    DEFAULT_WINDOW_SECONDS = int(os.getenv("DEFAULT_WINDOW_SECONDS", "60"))    
     # Server Config
     PORT = int(os.getenv("PORT", 5000))
     HOST = os.getenv("HOST", "0.0.0.0")

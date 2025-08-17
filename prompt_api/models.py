@@ -258,3 +258,15 @@ class PromptAnalysis(Base):
     complexity_level = Column(String)
     
     task = relationship("Task", back_populates="prompt_analysis")
+
+# Add this class to models.py
+class HistoryPrompt(Base):
+    """
+    Stores user's prompt history (top 20 prompts per user).
+    """
+    __tablename__ = "history_prompts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String, nullable=False, index=True)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
