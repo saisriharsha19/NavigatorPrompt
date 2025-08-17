@@ -25,9 +25,9 @@ export default async function AdminSubmissionsPage({
 
   // Fetch all statuses concurrently to provide to the client for instant filtering
   const [pending, approved, rejected] = await Promise.all([
-    getAdminLibrarySubmissions('PENDING', token),
-    getAdminLibrarySubmissions('APPROVED', token),
-    getAdminLibrarySubmissions('REJECTED', token),
+    getAdminLibrarySubmissions(token, { status_filter: 'PENDING' }),
+    getAdminLibrarySubmissions(token, { status_filter: 'APPROVED' }),
+    getAdminLibrarySubmissions(token, { status_filter: 'REJECTED' }),
   ]);
 
   return (

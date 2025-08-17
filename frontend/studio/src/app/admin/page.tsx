@@ -7,6 +7,7 @@ import { Users, BookText, Library, FileClock, TrendingUp } from "lucide-react";
 import { getAdminStats } from "@/app/actions";
 import { useAuth } from '@/hooks/use-auth';
 import { Skeleton } from '@/components/ui/skeleton';
+import Cookies from 'js-cookie';
 
 type AdminStats = {
   users: { total: number; active: number; admins: number };
@@ -25,7 +26,7 @@ export default function AdminDashboard() {
       if (!isAuthenticated) return;
       
       try {
-        const token = localStorage.getItem('auth_token');
+        const token = Cookies.get('auth_token');
         const data = await getAdminStats(token);
         setStats(data);
       } catch (error) {

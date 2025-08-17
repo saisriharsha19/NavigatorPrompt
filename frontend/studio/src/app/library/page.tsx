@@ -17,7 +17,7 @@ export default async function LibraryPage() {
     <div className="flex min-h-screen w-full flex-col bg-background">
       <AppHeader />
       <main className="flex-1">
-        <LibraryClient initialPrompts={initialPrompts} />
+        <LibraryClient />
       </main>
       <AppFooter />
     </div>

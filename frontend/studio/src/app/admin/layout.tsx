@@ -1,4 +1,4 @@
-// frontend/studio/src/app/admin/layout.tsx
+
 'use client';
 
 import { useAuth } from '@/hooks/use-auth';
@@ -7,15 +7,8 @@ import { AppFooter } from '@/components/app-footer';
 import { Button } from '@/components/ui/button';
 import { ShieldAlert, UserCircle } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { cn } from '@/lib/utils';
 import * as React from 'react';
-
-const adminNavItems = [
-  { href: '/admin', label: 'Dashboard' },
-  { href: '/admin/users', label: 'Users' },
-  { href: '/admin/submissions', label: 'Submissions' },
-];
+import { AdminNav } from '@/components/admin-nav';
 
 export default function AdminLayout({
   children,
@@ -23,7 +16,6 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const { isAuthenticated, isAdmin, login, isLoading } = useAuth();
-  const pathname = usePathname();
 
   if (isLoading) {
     return (
@@ -53,7 +45,7 @@ export default function AdminLayout({
                 Sign in with admin credentials to access the admin panel.
               </p>
               <div className="mt-6 space-y-2">
-                <Button onClick={login} className="w-full">
+                <Button onClick={() => login()} className="w-full">
                   Sign In
                 </Button>
                 <p className="text-xs text-muted-foreground">
@@ -94,39 +86,25 @@ export default function AdminLayout({
   return (
     <div className="flex min-h-screen w-full flex-col bg-background">
       <AppHeader />
-      <main className="flex-1 bg-muted/40 py-8 md:py-10">
-        <div className="container max-w-6xl px-4 sm:px-6 lg:px-8">
-          <div className="mb-8 space-y-0.5">
-            <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Admin Panel</h1>
-            <p className="text-muted-foreground">
-              Manage users, review submissions, and monitor platform activity.
-            </p>
+      <div className="flex flex-1">
+        <aside className="hidden w-64 flex-col border-r bg-background md:flex">
+          <div className="flex flex-col gap-2 p-4 pt-8">
+            <h2 className="text-lg font-semibold tracking-tight">Admin Panel</h2>
+            <p className="text-sm text-muted-foreground">Manage the platform.</p>
           </div>
-          
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-[240px_1fr] md:gap-10">
-            <aside className="md:mb-0">
-              <nav className="flex flex-col gap-1">
-                {adminNavItems.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      'flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary',
-                      pathname === item.href && 'bg-muted font-medium text-primary'
-                    )}
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-              </nav>
-            </aside>
-            
-            <div className="grid gap-6">
-              {children}
-            </div>
+          <div className="flex-1 overflow-auto py-2">
+            <nav className="grid items-start px-4 text-sm font-medium">
+              <AdminNav />
+            </nav>
           </div>
-        </div>
-      </main>
+        </aside>
+
+        <main className="flex-1 overflow-y-auto bg-muted/40">
+          <div className="p-6 sm:p-8 md:p-10">
+            {children}
+          </div>
+        </main>
+      </div>
       <AppFooter />
     </div>
   );

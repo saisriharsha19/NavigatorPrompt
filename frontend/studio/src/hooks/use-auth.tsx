@@ -1,7 +1,10 @@
+
 'use client';
 
 import { useToast } from '@/hooks/use-toast';
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
+import Cookies from 'js-cookie';
 
 type User = {
   id: string;
@@ -18,13 +21,14 @@ type AuthState = {
   isAuthenticated: boolean;
   user: User | null;
   isLoading: boolean;
+  isAuthLoading: boolean;
   error: string | null;
 };
 
 type AuthContextType = AuthState & {
   userId: string | null;
   isAdmin: boolean;
-  login: (email?: string) => Promise<void>;
+  login: (email?: string) => Promise<boolean>;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
   showLoginModal: boolean;
@@ -33,23 +37,25 @@ type AuthContextType = AuthState & {
 
 const AuthContext = React.createContext<AuthContextType | undefined>(undefined);
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authState, setAuthState] = React.useState<AuthState>({
     isAuthenticated: false,
     user: null,
     isLoading: true,
+    isAuthLoading: false,
     error: null,
   });
   const { toast } = useToast();
+  const router = useRouter();
+  const [showLoginModal, setShowLoginModal] = React.useState(false);
 
-  // Check for existing token and validate session
-  const checkExistingAuth = React.useCallback(async () => {
+  const checkAuthStatus = React.useCallback(async () => {
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = Cookies.get('auth_token');
       if (!token) {
-        setAuthState(prev => ({ ...prev, isLoading: false }));
+        setAuthState(prev => ({ ...prev, isAuthenticated: false, user: null, isLoading: false }));
         return;
       }
 
@@ -67,132 +73,139 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             isAuthenticated: true,
             user: sessionData.user,
             isLoading: false,
+            isAuthLoading: false,
             error: null,
           });
           return;
         }
       }
 
-      // Invalid token, remove it
-      localStorage.removeItem('auth_token');
+      Cookies.remove('auth_token');
       setAuthState({
         isAuthenticated: false,
         user: null,
         isLoading: false,
+        isAuthLoading: false,
         error: null,
       });
     } catch (error) {
       console.error('Auth check failed:', error);
-      localStorage.removeItem('auth_token');
+      Cookies.remove('auth_token');
       setAuthState({
         isAuthenticated: false,
         user: null,
         isLoading: false,
+        isAuthLoading: false,
         error: 'Authentication check failed',
       });
     }
   }, []);
 
-  // Initialize auth state on mount
   React.useEffect(() => {
-    checkExistingAuth();
-  }, [checkExistingAuth]);
-
-  const [showLoginModal, setShowLoginModal] = React.useState(false);
-
+    checkAuthStatus();
+  }, [checkAuthStatus]);
+  
   const login = React.useCallback(async (email?: string) => {
+    setAuthState(prev => ({ ...prev, isAuthLoading: true, error: null }));
+
     try {
-      setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
-
-      // Check if SAML is available (production)
-      if (process.env.NODE_ENV === 'production' || process.env.NEXT_PUBLIC_USE_SAML === 'true') {
-        // Redirect to SAML login
+      // For production builds or when SAML is explicitly enabled, redirect to SAML login.
+      if (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN !== 'true') {
         window.location.href = `${BACKEND_URL}/auth/saml/login`;
-        return;
+        return true;
       }
 
-      // Development: Show modal if no email provided
-      if (!email) {
-        setAuthState(prev => ({ ...prev, isLoading: false }));
-        setShowLoginModal(true);
-        return;
-      }
+      // For development/testing, use the mock login flow.
+      if (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN === 'true') {
+        // If no email is provided, it means the user clicked the main "Sign In" button.
+        // So, we show the modal to let them choose a mock user.
+        if (typeof email !== 'string') {
+          setShowLoginModal(true);
+          setAuthState(prev => ({ ...prev, isAuthLoading: false }));
+          return false; // Return false because the login process isn't complete yet.
+        }
 
-      // Development: Use mock login with provided email
-      const response = await fetch(`${BACKEND_URL}/auth/mock/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email: email }), // Fix: ensure email is a string
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Login failed');
-      }
-
-      const data = await response.json();
-      
-      if (data.success && data.access_token) {
-        localStorage.setItem('auth_token', data.access_token);
-        setAuthState({
-          isAuthenticated: true,
-          user: data.user,
-          isLoading: false,
-          error: null,
+        // If an email IS provided, it means it came from the DevLoginModal.
+        // Now we proceed with the mock login API call.
+        const response = await fetch(`${BACKEND_URL}/auth/mock/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email }),
         });
 
-        toast({
-          title: 'Signed In Successfully',
-          description: `Welcome back, ${data.user.name || data.user.username}!`,
-        });
-      } else {
-        throw new Error('Invalid response from server');
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Login failed');
+        }
+
+        const data = await response.json();
+        
+        if (data.success && data.access_token) {
+          Cookies.set('auth_token', data.access_token, { expires: 7 });
+          
+          setAuthState({
+            isAuthenticated: true,
+            user: data.user,
+            isLoading: false,
+            isAuthLoading: false,
+            error: null,
+          });
+
+          toast({
+            title: 'Signed In Successfully',
+            description: `Welcome back, ${data.user.name || data.user.username}!`,
+          });
+          
+          router.refresh();
+          return true;
+        } else {
+          throw new Error('Invalid response from server');
+        }
       }
+
+      // Fallback for production if dev login isn't enabled
+      window.location.href = `${BACKEND_URL}/auth/saml/login`;
+      return true;
+
     } catch (error: any) {
       console.error('Login failed:', error);
-      setAuthState({
-        isAuthenticated: false,
-        user: null,
-        isLoading: false,
+      setAuthState(prev => ({
+        ...prev,
+        isAuthLoading: false,
         error: error.message || 'Login failed',
-      });
+      }));
 
       toast({
         variant: 'destructive',
         title: 'Sign In Failed',
         description: error.message || 'Unable to sign in. Please try again.',
       });
+      return false;
     }
-  }, [toast]);
+  }, [toast, router]);
 
   const logout = React.useCallback(async () => {
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = Cookies.get('auth_token');
       
-      // Call backend logout endpoint if token exists
       if (token) {
-        try {
-          await fetch(`${BACKEND_URL}/auth/logout`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-          });
-        } catch (error) {
-          // Ignore logout endpoint errors, proceed with local cleanup
-          console.warn('Backend logout failed:', error);
-        }
+        await fetch(`${BACKEND_URL}/auth/logout`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        }).catch(err => console.warn('Backend logout failed, proceeding with client-side cleanup:', err));
       }
 
-      // Clear local storage and state
-      localStorage.removeItem('auth_token');
+      Cookies.remove('auth_token');
       setAuthState({
         isAuthenticated: false,
         user: null,
         isLoading: false,
+        isAuthLoading: false,
         error: null,
       });
 
@@ -200,24 +213,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         title: 'Signed Out',
         description: 'You have been signed out successfully.',
       });
+      router.push('/');
     } catch (error: any) {
       console.error('Logout error:', error);
-      // Still clear local state even if logout call fails
-      localStorage.removeItem('auth_token');
+      Cookies.remove('auth_token');
       setAuthState({
         isAuthenticated: false,
         user: null,
         isLoading: false,
+        isAuthLoading: false,
         error: null,
       });
     }
-  }, [toast]);
+  }, [toast, router]);
 
   const refreshSession = React.useCallback(async () => {
-    await checkExistingAuth();
-  }, [checkExistingAuth]);
+    await checkAuthStatus();
+  }, [checkAuthStatus]);
 
-  // Derive computed values
   const userId = authState.user?.id || null;
   const isAdmin = authState.user?.is_admin || false;
 
@@ -246,3 +259,5 @@ export function useAuth() {
   }
   return context;
 }
+
+    

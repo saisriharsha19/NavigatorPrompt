@@ -524,77 +524,82 @@ const MAX_HISTORY_PROMPTS_PER_USER = 20;
 
 // --- User Prompt History Actions (Backend API) ---
 
-export async function getHistoryPromptsFromDB(userId: string, token?: string): Promise<Prompt[]> {
+// Replace the existing history functions with these:
+
+export async function getHistoryPromptsFromDB(userId: string): Promise<Prompt[]> {
   if (!userId) return [];
-  
   try {
-    const response = await fetch(`${BACKEND_URL}/user/prompts`, {
+    const url = new URL(`${BACKEND_URL}/history/prompts`);
+    url.searchParams.append('user_id', userId);
+    
+    const response = await fetch(url.toString(), {
       method: 'GET',
-      headers: getAuthHeaders(token),
+      headers: { 'Content-Type': 'application/json' },
       cache: 'no-store',
     });
 
     if (!response.ok) {
-      if (response.status === 401) {
-        // User not authenticated, return empty array
-        return [];
-      }
-      const errorData = await response.json().catch(() => ({ detail: 'Failed to fetch user prompts.' }));
-      throw new Error(errorData.detail || 'Failed to fetch user prompts.');
+      const errorData = await response.json().catch(() => ({ detail: 'Failed to parse API error response.' }));
+      throw new Error(errorData.detail || `API request failed with status ${response.status}`);
     }
     
-    const prompts = await response.json();
-    // Convert backend format to frontend format
-    return prompts.map((p: any) => ({
-      id: p.id,
-      userId: p.user_id || userId,
-      text: p.prompt_text,
-      createdAt: p.created_at,
-      summary: p.summary,
-      tags: p.tags
-    }));
+    const prompts: Prompt[] = await response.json();
+    return prompts;
   } catch (error) {
     console.error('Failed to get history prompts:', error);
     return [];
   }
 }
 
-export async function addHistoryPromptToDB(promptText: string, userId: string, token?: string): Promise<Prompt> {
+export async function addHistoryPromptToDB(promptText: string, userId: string): Promise<Prompt> {
   if (!userId) throw new Error('User not authenticated.');
-  if (!promptText.trim()) throw new Error('Prompt text cannot be empty.');
 
   try {
-    // For history, we'll create a user prompt entry via the backend
-    // Since there's no direct "add to history" endpoint, we'll track this differently
-    // This creates a prompt entry that gets tracked in the user's history
-    
-    const newPrompt: Prompt = {
-      id: crypto.randomUUID(),
-      userId: userId,
-      text: promptText,
-      createdAt: new Date().toISOString(),
-    };
+    const response = await fetch(`${BACKEND_URL}/history/prompts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt_text: promptText, user_id: userId }),
+    });
 
-    // Note: The backend automatically tracks user prompts when they use the generation/evaluation endpoints
-    // For manual history addition, we can store locally and sync later, or create a dedicated endpoint
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Failed to parse API error response.' }));
+      throw new Error(errorData.detail || `API request failed with status ${response.status}`);
+    }
     
+    const newPrompt: Prompt = await response.json();
+    revalidatePath('/history');
     return newPrompt;
   } catch (error: any) {
-    console.error('Failed to add prompt to history:', error);
+    console.error('Failed to add prompt to history via API:', error);
     throw new Error(error.message || 'Failed to save prompt to history.');
   }
 }
 
-export async function deleteHistoryPromptFromDB(id: string, userId: string, token?: string): Promise<{ success: boolean }> {
+export async function deleteHistoryPromptFromDB(id: string, userId: string): Promise<{ success: boolean }> {
   if (!userId) throw new Error('User not authenticated.');
 
   try {
-    // Note: You may need to add a DELETE endpoint to your backend for user prompts
-    // For now, we'll return success to avoid breaking the UI
-    console.log(`Would delete prompt ${id} for user ${userId}`);
+    const url = new URL(`${BACKEND_URL}/history/prompts/${id}`);
+    url.searchParams.append('user_id', userId);
+    
+    const response = await fetch(url.toString(), {
+      method: 'DELETE',
+    });
+
+    if (response.status === 204) {
+      revalidatePath('/history');
+      return { success: true };
+    }
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Failed to parse API error response.' }));
+      throw new Error(errorData.detail || `API request failed with status ${response.status}`);
+    }
+
+    revalidatePath('/history');
     return { success: true };
   } catch (error: any) {
-    console.error('Failed to delete prompt from history:', error);
+    console.error('Failed to delete prompt from history via API:', error);
     throw new Error(error.message || 'Failed to delete prompt from history.');
   }
 }

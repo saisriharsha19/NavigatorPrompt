@@ -10,7 +10,7 @@ export default async function HistoryPage() {
   const token = cookieStore.get('auth_token')?.value;
   
   // Fetch initial prompts on the server. The client hook will manage updates.
-  const initialPrompts = token ? await getHistoryPromptsFromDB(token) : [];
+  const initialPrompts = token ? await getHistoryPromptsFromDB("dummy-user-id", token) : [];
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background">

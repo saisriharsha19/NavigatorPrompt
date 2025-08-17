@@ -1,180 +1,129 @@
-// frontend/studio/src/components/admin-submissions-client.tsx
 'use client';
-
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { CheckCircle, XCircle, Clock, Eye, MessageSquare } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/hooks/use-auth';
-import { getAdminLibrarySubmissions, reviewLibrarySubmission, LibrarySubmission } from '@/app/actions';
+import { CheckCircle, XCircle, Clock, Eye } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatDistanceToNow } from 'date-fns';
+import { LibrarySubmission, reviewLibrarySubmission } from '@/app/actions';
+import Cookies from 'js-cookie';
 
-export function AdminSubmissionsClient() {
-  const [allSubmissions, setAllSubmissions] = useState<LibrarySubmission[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'PENDING' | 'APPROVED' | 'REJECTED'>('PENDING');
-  const [reviewingId, setReviewingId] = useState<string | null>(null);
-  const [adminNotes, setAdminNotes] = useState('');
+type AdminSubmissionsClientProps = {
+  initialStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+  pendingSubmissions: LibrarySubmission[];
+  approvedSubmissions: LibrarySubmission[];
+  rejectedSubmissions: LibrarySubmission[];
+};
+
+export function AdminSubmissionsClient({
+  initialStatus,
+  pendingSubmissions,
+  approvedSubmissions,
+  rejectedSubmissions,
+}: AdminSubmissionsClientProps) {
+  const [activeTab, setActiveTab] = useState<'PENDING' | 'APPROVED' | 'REJECTED'>(initialStatus);
   const [viewingSubmission, setViewingSubmission] = useState<LibrarySubmission | null>(null);
-  const { toast } = useToast();
-  const { isAuthenticated } = useAuth();
-
-  const loadAllSubmissions = async () => {
-    if (!isAuthenticated) return;
-    
-    try {
-      setIsLoading(true);
-      const token = localStorage.getItem('auth_token');
-      // Load all submissions without filter to get counts
-      const data = await getAdminLibrarySubmissions(token);
-      setAllSubmissions(data);
-    } catch (error) {
-      console.error('Failed to load submissions:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Failed to load submissions.',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadAllSubmissions();
-  }, [isAuthenticated]);
+  const [reviewingSubmission, setReviewingSubmission] = useState<LibrarySubmission | null>(null);
+  const [reviewAction, setReviewAction] = useState<'approve' | 'reject' | null>(null);
+  const [adminNotes, setAdminNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value as 'PENDING' | 'APPROVED' | 'REJECTED');
   };
 
-  const handleReview = async (submissionId: string, action: 'approve' | 'reject') => {
+  let currentTabSubmissions: LibrarySubmission[] = [];
+  if (activeTab === 'PENDING') currentTabSubmissions = pendingSubmissions;
+  if (activeTab === 'APPROVED') currentTabSubmissions = approvedSubmissions;
+  if (activeTab === 'REJECTED') currentTabSubmissions = rejectedSubmissions;
+
+  function getStatusIcon(status: string): import("react").ReactNode {
+    switch (status) {
+      case 'APPROVED':
+        return <CheckCircle className="text-green-500 h-5 w-5" />;
+      case 'REJECTED':
+        return <XCircle className="text-red-500 h-5 w-5" />;
+      case 'PENDING':
+      default:
+        return <Clock className="text-yellow-500 h-5 w-5" />;
+    }
+  }
+  function getStatusBadge(status: string): import("react").ReactNode {
+    switch (status) {
+      case 'APPROVED':
+        return <Badge className="bg-green-100 text-green-700 border-green-200">Approved</Badge>;
+      case 'REJECTED':
+        return <Badge className="bg-red-100 text-red-700 border-red-200">Rejected</Badge>;
+      case 'PENDING':
+      default:
+        return <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">Pending</Badge>;
+    }
+  }
+
+  // Approve/Reject handler
+  async function handleReview() {
+    if (!reviewingSubmission || !reviewAction) return;
+    setIsSubmitting(true);
     try {
-      setReviewingId(submissionId);
-      const token = localStorage.getItem('auth_token');
-      await reviewLibrarySubmission(submissionId, action, adminNotes, token);
-      
-      toast({
-        title: 'Success',
-        description: `Submission ${action}d successfully.`,
-      });
-      
+      const token = Cookies.get('auth_token');
+      await reviewLibrarySubmission(
+        reviewingSubmission.id,
+        reviewAction,
+        adminNotes,
+        token
+      );
+      // Optionally, reload or update submissions here
+      setReviewingSubmission(null);
+      setReviewAction(null);
       setAdminNotes('');
-      await loadAllSubmissions(); // Reload all submissions
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.message || `Failed to ${action} submission.`,
-      });
+      // You may want to trigger a refresh from parent or refetch here
+      window.location.reload(); // quick way to refresh for demo
+    } catch (error) {
+      alert('Failed to review submission.');
     } finally {
-      setReviewingId(null);
+      setIsSubmitting(false);
     }
-  };
-
-  const pendingCount = allSubmissions.filter(s => s.status === 'PENDING').length;
-  const approvedCount = allSubmissions.filter(s => s.status === 'APPROVED').length;
-  const rejectedCount = allSubmissions.filter(s => s.status === 'REJECTED').length;
-
-  // Filter submissions for active tab
-  const currentTabSubmissions = allSubmissions.filter(sub => sub.status === activeTab);
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'APPROVED':
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case 'REJECTED':
-        return <XCircle className="h-4 w-4 text-red-600" />;
-      case 'PENDING':
-        return <Clock className="h-4 w-4 text-yellow-600" />;
-      default:
-        return null;
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'APPROVED':
-        return <Badge variant="default">Approved</Badge>;
-      case 'REJECTED':
-        return <Badge variant="destructive">Rejected</Badge>;
-      case 'PENDING':
-        return <Badge variant="secondary">Pending</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Library Submissions</h2>
-        <div className="grid gap-4">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Card key={i} className="animate-pulse">
-              <CardHeader>
-                <div className="h-4 bg-muted rounded w-3/4"></div>
-                <div className="h-3 bg-muted rounded w-1/2"></div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <div className="h-3 bg-muted rounded"></div>
-                  <div className="h-3 bg-muted rounded w-5/6"></div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
-    );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Library Submissions</h2>
-        <Button variant="outline" onClick={loadAllSubmissions}>
-          Refresh
-        </Button>
-      </div>
-
+    <div className="space-y-4 sm:space-y-6">
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="PENDING">
-            Pending ({pendingCount})
+        <TabsList className="flex flex-row w-full">
+          <TabsTrigger value="PENDING" className="flex-1 text-xs sm:text-base truncate">
+            Pending ({pendingSubmissions.length})
           </TabsTrigger>
-          <TabsTrigger value="APPROVED">
-            Approved ({approvedCount})
+          <TabsTrigger value="APPROVED" className="flex-1 text-xs sm:text-base truncate">
+            Approved ({approvedSubmissions.length})
           </TabsTrigger>
-          <TabsTrigger value="REJECTED">
-            Rejected ({rejectedCount})
+          <TabsTrigger value="REJECTED" className="flex-1 text-xs sm:text-base truncate">
+            Rejected ({rejectedSubmissions.length})
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value={activeTab} className="space-y-4">
+        <TabsContent value={activeTab} className="space-y-2 sm:space-y-4">
           {currentTabSubmissions.length === 0 ? (
-            <Card>
-              <CardContent className="flex items-center justify-center py-8">
-                <p className="text-muted-foreground">No {activeTab.toLowerCase()} submissions found.</p>
+            <Card className="w-full">
+              <CardContent className="flex items-center justify-center py-6 sm:py-8">
+                <p className="text-muted-foreground text-sm sm:text-base">
+                  No {activeTab.toLowerCase()} submissions found.
+                </p>
               </CardContent>
             </Card>
           ) : (
             currentTabSubmissions.map((submission) => (
-              <Card key={submission.id}>
+              <Card key={submission.id} className="w-full">
                 <CardHeader>
-                  <div className="flex items-start justify-between">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                     <div className="space-y-1">
-                      <CardTitle className="flex items-center gap-2">
+                      <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
                         {getStatusIcon(submission.status)}
                         Submission from {submission.user_email || 'Unknown User'}
                       </CardTitle>
-                      <CardDescription>
+                      <CardDescription className="text-xs sm:text-sm">
                         Submitted {formatDistanceToNow(new Date(submission.created_at), { addSuffix: true })}
                         {submission.reviewed_at && (
                           <> • Reviewed {formatDistanceToNow(new Date(submission.reviewed_at), { addSuffix: true })}</>
@@ -184,131 +133,50 @@ export function AdminSubmissionsClient() {
                     {getStatusBadge(submission.status)}
                   </div>
                 </CardHeader>
-                
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-2 sm:space-y-4">
                   <div>
-                    <h4 className="font-medium mb-2">Prompt Text:</h4>
-                    <div className="p-3 bg-muted rounded-lg">
-                      <p className="text-sm line-clamp-3">{submission.prompt_text}</p>
+                    <h4 className="font-medium mb-1 sm:mb-2 text-sm sm:text-base">Prompt Text:</h4>
+                    <div className="p-2 sm:p-3 bg-muted rounded-lg">
+                      <p className="text-xs sm:text-sm line-clamp-3">{submission.prompt_text}</p>
                     </div>
                   </div>
-
-                  {submission.submission_notes && (
-                    <div>
-                      <h4 className="font-medium mb-2">Submitter Notes:</h4>
-                      <p className="text-sm text-muted-foreground">{submission.submission_notes}</p>
-                    </div>
-                  )}
-
-                  {submission.admin_notes && (
-                    <div>
-                      <h4 className="font-medium mb-2">Admin Notes:</h4>
-                      <p className="text-sm text-muted-foreground">{submission.admin_notes}</p>
-                    </div>
-                  )}
-
-                  {submission.tags && submission.tags.length > 0 && (
-                    <div>
-                      <h4 className="font-medium mb-2">Tags:</h4>
-                      <div className="flex flex-wrap gap-1">
-                        {submission.tags.map((tag, index) => (
-                          <Badge key={index} variant="outline" className="text-xs">
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2 pt-2">
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" size="sm" onClick={() => setViewingSubmission(submission)}>
-                          <Eye className="h-4 w-4 mr-1" />
-                          View Full
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="sm:max-w-2xl">
-                        <DialogHeader>
-                          <DialogTitle>Full Submission</DialogTitle>
-                        </DialogHeader>
-                        <ScrollArea className="h-96 w-full rounded-md border p-4">
-                          <div className="space-y-4">
-                            <div>
-                              <h4 className="font-medium mb-2">Prompt Text:</h4>
-                              <p className="text-sm whitespace-pre-wrap">{submission.prompt_text}</p>
-                            </div>
-                            {submission.submission_notes && (
-                              <div>
-                                <h4 className="font-medium mb-2">Submitter Notes:</h4>
-                                <p className="text-sm">{submission.submission_notes}</p>
-                              </div>
-                            )}
-                          </div>
-                        </ScrollArea>
-                      </DialogContent>
-                    </Dialog>
-
-                    {submission.status === 'PENDING' && (
+                  {/* ...other fields... */}
+                  <div className="flex gap-2 pt-2 flex-col sm:flex-row">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      onClick={() => setViewingSubmission(submission)}
+                    >
+                      <Eye className="h-4 w-4 mr-1" />
+                      View Full
+                    </Button>
+                    {activeTab === 'PENDING' && (
                       <>
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button variant="default" size="sm" disabled={reviewingId === submission.id}>
-                              <CheckCircle className="h-4 w-4 mr-1" />
-                              Approve
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Approve Submission</DialogTitle>
-                            </DialogHeader>
-                            <div className="space-y-4">
-                              <Textarea
-                                placeholder="Add approval notes (optional)"
-                                value={adminNotes}
-                                onChange={(e) => setAdminNotes(e.target.value)}
-                              />
-                              <div className="flex gap-2">
-                                <Button 
-                                  onClick={() => handleReview(submission.id, 'approve')}
-                                  disabled={reviewingId === submission.id}
-                                >
-                                  Approve & Add to Library
-                                </Button>
-                              </div>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
-
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button variant="destructive" size="sm" disabled={reviewingId === submission.id}>
-                              <XCircle className="h-4 w-4 mr-1" />
-                              Reject
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Reject Submission</DialogTitle>
-                            </DialogHeader>
-                            <div className="space-y-4">
-                              <Textarea
-                                placeholder="Reason for rejection (optional)"
-                                value={adminNotes}
-                                onChange={(e) => setAdminNotes(e.target.value)}
-                              />
-                              <div className="flex gap-2">
-                                <Button 
-                                  variant="destructive"
-                                  onClick={() => handleReview(submission.id, 'reject')}
-                                  disabled={reviewingId === submission.id}
-                                >
-                                  Reject Submission
-                                </Button>
-                              </div>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="w-full sm:w-auto"
+                          onClick={() => {
+                            setReviewingSubmission(submission);
+                            setReviewAction('approve');
+                          }}
+                        >
+                          <CheckCircle className="h-4 w-4 mr-1" />
+                          Approve
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="w-full sm:w-auto"
+                          onClick={() => {
+                            setReviewingSubmission(submission);
+                            setReviewAction('reject');
+                          }}
+                        >
+                          <XCircle className="h-4 w-4 mr-1" />
+                          Reject
+                        </Button>
                       </>
                     )}
                   </div>
@@ -318,6 +186,64 @@ export function AdminSubmissionsClient() {
           )}
         </TabsContent>
       </Tabs>
+      {/* Dialog for viewing submission */}
+      <Dialog open={!!viewingSubmission} onOpenChange={() => setViewingSubmission(null)}>
+        <DialogContent className="max-w-full sm:max-w-2xl p-2 sm:p-4">
+          <DialogHeader>
+            <DialogTitle className="text-base sm:text-lg">Full Submission</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="h-80 sm:h-96 w-full rounded-md border p-2 sm:p-4">
+            {viewingSubmission && (
+              <div className="space-y-2 sm:space-y-4">
+                <div>
+                  <h4 className="font-medium mb-1 sm:mb-2 text-sm sm:text-base">Prompt Text:</h4>
+                  <p className="text-xs sm:text-sm whitespace-pre-wrap">{viewingSubmission.prompt_text}</p>
+                </div>
+                {viewingSubmission.submission_notes && (
+                  <div>
+                    <h4 className="font-medium mb-1 sm:mb-2 text-sm sm:text-base">Submitter Notes:</h4>
+                    <p className="text-xs sm:text-sm">{viewingSubmission.submission_notes}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+      {/* Dialog for approve/reject */}
+      <Dialog open={!!reviewingSubmission} onOpenChange={() => setReviewingSubmission(null)}>
+        <DialogContent className="max-w-full sm:max-w-md p-2 sm:p-4">
+          <DialogHeader>
+            <DialogTitle className="text-base sm:text-lg">
+              {reviewAction === 'approve' ? 'Approve Submission' : 'Reject Submission'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Textarea
+              placeholder={reviewAction === 'approve' ? 'Add approval notes (optional)' : 'Reason for rejection (optional)'}
+              value={adminNotes}
+              onChange={(e) => setAdminNotes(e.target.value)}
+              className="text-xs sm:text-sm"
+            />
+            <div className="flex gap-2">
+              <Button
+                onClick={handleReview}
+                disabled={isSubmitting}
+                variant={reviewAction === 'approve' ? 'default' : 'destructive'}
+              >
+                {reviewAction === 'approve' ? 'Approve & Add to Library' : 'Reject Submission'}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setReviewingSubmission(null)}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

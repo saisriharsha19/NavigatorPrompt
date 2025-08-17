@@ -1,3 +1,4 @@
+// frontend/studio/src/app/layout.tsx - ADD rate limit indicator
 import type {Metadata} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster"
@@ -6,6 +7,7 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { PromptHistoryProvider } from '@/hooks/use-prompts';
 import { PromptForgeProvider } from '@/hooks/use-prompt-forge';
 import { LibraryProvider } from '@/hooks/use-library';
+import { RateLimitIndicator } from '@/components/rate-limit-indicator'; // ADD THIS
 
 export const metadata: Metadata = {
   title: 'Navigator Prompt',
@@ -36,6 +38,7 @@ export default function RootLayout({
                   disableTransitionOnChange
                 >
                   {children}
+                  <RateLimitIndicator /> {/* ADD THIS */}
                 </ThemeProvider>
               </PromptForgeProvider>
             </LibraryProvider>

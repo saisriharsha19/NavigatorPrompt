@@ -1,15 +1,25 @@
+// frontend/studio/src/hooks/use-toast.ts - UPDATED VERSION
 "use client"
 
-// Inspired by react-hot-toast library
 import * as React from "react"
-
 import type {
   ToastActionElement,
   ToastProps,
 } from "@/components/ui/toast"
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 5000
+const TOAST_REMOVE_DELAY = 1000000
+
+// Rate limit detection keywords
+const RATE_LIMIT_KEYWORDS = [
+  '429',
+  'rate limit',
+  'rate limited', 
+  'too many requests',
+  'retry after',
+  'limit exceeded',
+  'requests per'
+];
 
 type ToasterToast = ToastProps & {
   id: string
@@ -93,8 +103,6 @@ export const reducer = (state: State, action: Action): State => {
     case "DISMISS_TOAST": {
       const { toastId } = action
 
-      // ! Side effects ! - This could be extracted into a dismissToast() action,
-      // but I'll keep it here for simplicity
       if (toastId) {
         addToRemoveQueue(toastId)
       } else {
@@ -142,7 +150,30 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, "id">
 
+// ADD: Rate limit detection function
+function isRateLimitToast(toast: Toast): boolean {
+  const textToCheck = [
+    typeof toast.title === 'string' ? toast.title : '',
+    typeof toast.description === 'string' ? toast.description : '',
+  ].join(' ').toLowerCase();
+  
+  return RATE_LIMIT_KEYWORDS.some(keyword => 
+    textToCheck.includes(keyword)
+  );
+}
+
 function toast({ ...props }: Toast) {
+  // FIX: Block rate limit toasts
+  if (isRateLimitToast(props)) {
+    console.log('🚫 Rate limit toast blocked - handled by rate limit indicator');
+    console.log('Blocked toast:', { title: props.title, description: props.description });
+    return {
+      id: 'rate-limit-blocked',
+      dismiss: () => {},
+      update: () => {},
+    };
+  }
+
   const id = genId()
 
   const update = (props: ToasterToast) =>

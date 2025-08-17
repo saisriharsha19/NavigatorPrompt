@@ -1,11 +1,13 @@
+
 'use client';
 
 import { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import { useToast } from './use-toast';
 import { useAuth } from './use-auth';
 import type { Prompt } from './use-prompts';
+import Cookies from 'js-cookie';
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
 
 type LibraryContextType = {
   libraryPrompts: Prompt[];
@@ -26,7 +28,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, userId, isAdmin } = useAuth();
 
   const getAuthHeaders = useCallback(() => {
-    const token = localStorage.getItem('auth_token');
+    const token = Cookies.get('auth_token');
     return {
       'Content-Type': 'application/json',
       ...(token && { 'Authorization': `Bearer ${token}` }),

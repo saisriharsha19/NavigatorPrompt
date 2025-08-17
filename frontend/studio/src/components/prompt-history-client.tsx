@@ -39,7 +39,7 @@ import { Skeleton } from './ui/skeleton';
 import { useAuth } from '@/hooks/use-auth';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { cn } from '@/lib/utils';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 function PromptCardSkeleton() {
   return (
@@ -93,11 +93,33 @@ export function PromptHistoryClient({ initialPrompts }: { initialPrompts: Prompt
   const [viewingPrompt, setViewingPrompt] = useState<Prompt | null>(null);
   const { toast } = useToast();
 
-  const copyToClipboard = (prompt: Prompt) => {
-    navigator.clipboard.writeText(prompt.text);
-    setCopiedId(prompt.id);
-    toast({ title: 'Copied!', description: 'Prompt copied to clipboard.' });
-    setTimeout(() => setCopiedId(null), 2000);
+  const copyToClipboard = async (prompt: Prompt) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(prompt.text);
+      } else {
+        // Fallback for browsers without clipboard API
+        const textArea = document.createElement('textarea');
+        textArea.value = prompt.text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      
+      setCopiedId(prompt.id);
+      toast({ title: 'Copied!', description: 'Prompt copied to clipboard.' });
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (error) {
+      console.error('Copy failed:', error);
+      toast({ 
+        variant: 'destructive',
+        title: 'Copy failed', 
+        description: 'Could not copy to clipboard.' 
+      });
+    }
   };
   
   const filteredPrompts = prompts.filter(prompt => 
@@ -219,100 +241,95 @@ export function PromptHistoryClient({ initialPrompts }: { initialPrompts: Prompt
               initial="hidden"
               animate="visible"
             >
-              {filteredPrompts.map((prompt) => (
-                <motion.li key={prompt.id} variants={itemVariants}>
-                  <Card className="flex h-full flex-col">
-                    <CardHeader className="p-4 sm:p-6">
-                      <CardTitle className="text-lg leading-snug">
-                        {getPromptTitle(prompt.text)}
-                      </CardTitle>
-                      <CardDescription>
+              <AnimatePresence>
+                {filteredPrompts.map((prompt) => (
+                  <motion.li key={prompt.id} variants={itemVariants} layout>
+                    <Card className="flex h-full flex-col">
+                      <CardHeader className="p-4 sm:p-6">
+                        <CardTitle className="text-lg leading-snug">
+                          {getPromptTitle(prompt.text)}
+                        </CardTitle>
+                          <CardDescription>
+                              <span className="text-muted-foreground text-sm">
+                                  {prompt.createdAt ? formatDistanceToNow(new Date(prompt.createdAt), { addSuffix: true }): 'recently'}
+                              </span>
+                          </CardDescription>
+                      </CardHeader>
+                      <CardContent className="flex-grow p-4 pt-0 sm:p-6">
+                        <p className="line-clamp-6 text-sm text-foreground/80">
+                          {prompt.text}
+                        </p>
+                      </CardContent>
+                      <CardFooter className="flex justify-end gap-2 p-4 pt-0 sm:p-6 mt-auto">
                         <Tooltip>
-                            <TooltipTrigger>
-                                <span className="cursor-default">Saved {format(new Date(prompt.createdAt), 'MMM d, yyyy')}</span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                                <p>{formatDistanceToNow(new Date(prompt.createdAt), { addSuffix: true })}</p>
-                            </TooltipContent>
+                          <TooltipTrigger asChild>
+                            <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => setViewingPrompt(prompt)}
+                                  aria-label="View prompt"
+                              >
+                                  <Eye className="h-4 w-4" />
+                              </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>View full prompt</p>
+                          </TooltipContent>
                         </Tooltip>
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex-grow p-4 pt-0 sm:p-6">
-                      <p className="line-clamp-6 text-sm text-foreground/80">
-                        {prompt.text}
-                      </p>
-                    </CardContent>
-                    <CardFooter className="flex justify-end gap-2 p-4 pt-0 sm:p-6">
-                       <Tooltip>
-                        <TooltipTrigger asChild>
-                           <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setViewingPrompt(prompt)}
-                                aria-label="View prompt"
+
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => copyToClipboard(prompt)}
+                              aria-label="Copy prompt"
                             >
-                                <Eye className="h-4 w-4" />
+                              {copiedId === prompt.id ? (
+                                <Check className="h-4 w-4 text-primary" />
+                              ) : (
+                                <Clipboard className="h-4 w-4" />
+                              )}
                             </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>View full prompt</p>
-                        </TooltipContent>
-                      </Tooltip>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Copy prompt</p>
+                          </TooltipContent>
+                        </Tooltip>
 
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => copyToClipboard(prompt)}
-                            aria-label="Copy prompt"
-                          >
-                            {copiedId === prompt.id ? (
-                              <Check className="h-4 w-4 text-primary" />
-                            ) : (
-                              <Clipboard className="h-4 w-4" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Copy prompt</p>
-                        </TooltipContent>
-                      </Tooltip>
-
-                      {user?.is_admin && (
                         <AlertDialog>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <AlertDialogTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="text-destructive/70 hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:ring-accent" aria-label="Delete prompt">
+                                  <Button variant="ghost" size="icon" className="text-destructive/70 hover:text-destructive focus-visible:text-destructive" aria-label="Delete prompt">
                                       <Trash2 className="h-4 w-4 transition-colors" />
                                   </Button>
                               </AlertDialogTrigger>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Delete prompt (Admin)</p>
+                              <p>Delete prompt</p>
                             </TooltipContent>
                           </Tooltip>
                           <AlertDialogContent>
                             <AlertDialogHeader className="text-center sm:text-left">
                               <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                               <AlertDialogDescription>
-                                This action cannot be undone. This will permanently delete this prompt from the user's history.
+                                This action cannot be undone. This will permanently delete this prompt from your history.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
-                              <AlertDialogCancel className={cn(buttonVariants({variant: 'default'}))}>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => deletePrompt(prompt.id, prompt.userId)} className={cn(buttonVariants({variant: 'destructive'}))}>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => deletePrompt(prompt.id)} className={buttonVariants({ variant: 'destructive' })}>
                                 Delete
                               </AlertDialogAction>
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
-                      )}
-                    </CardFooter>
-                  </Card>
-                </motion.li>
-              ))}
+                      </CardFooter>
+                    </Card>
+                  </motion.li>
+                ))}
+              </AnimatePresence>
             </motion.ul>
           ) : (
             <div role="region" aria-labelledby="empty-history-heading" className="flex h-[50vh] flex-col items-center justify-center rounded-lg border-2 border-dashed">

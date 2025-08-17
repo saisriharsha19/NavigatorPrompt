@@ -86,7 +86,7 @@ export function PromptLibraryClient() {
             <p className="mt-2 text-muted-foreground">
               Sign in to view, save, and manage your curated collection of prompts.
             </p>
-            <Button onClick={login} className="mt-6">
+            <Button onClick={() => login()} className="mt-6">
                 <UserCircle className="mr-2 h-5 w-5" />
                 Sign In
             </Button>

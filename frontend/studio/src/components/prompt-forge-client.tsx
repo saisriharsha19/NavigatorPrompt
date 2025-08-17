@@ -43,6 +43,7 @@ import { DocumentManager } from './document-manager';
 import { Badge, badgeVariants } from './ui/badge';
 import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
+import Cookies from 'js-cookie';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
@@ -113,7 +114,7 @@ export function PromptForgeClient() {
   };
 
   const getAuthHeaders = useCallback(() => {
-    const token = localStorage.getItem('auth_token');
+    const token = Cookies.get('auth_token');
     return {
       'Content-Type': 'application/json',
       ...(token && { 'Authorization': `Bearer ${token}` }),
@@ -699,7 +700,7 @@ Selected Suggestions:
                         {isAuthenticated ? 'Your evaluation results will appear here.' : 'Please sign in to view evaluation results.'}
                       </p>
                       {!isAuthenticated && (
-                        <Button onClick={login} className='mt-4'>Sign In</Button>
+                        <Button onClick={() => login()} className='mt-4'>Sign In</Button>
                       )}
                     </div>
                   )}

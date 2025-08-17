@@ -1,11 +1,12 @@
+
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
 import { Loader2 } from 'lucide-react';
-
-export default function AuthCallbackPage() {
+import Cookies from 'js-cookie';
+function AuthCallback() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { refreshSession } = useAuth();
@@ -27,7 +28,7 @@ export default function AuthCallbackPage() {
         // Check if there's a token in the URL params (from SAML callback)
         const token = searchParams.get('token');
         if (token) {
-          localStorage.setItem('auth_token', token);
+          Cookies.set('auth_token', token, { expires: 1 });
         }
 
         // Refresh the session to get user data
@@ -88,5 +89,14 @@ export default function AuthCallbackPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+
+export default function AuthCallbackPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <AuthCallback />
+    </Suspense>
   );
 }

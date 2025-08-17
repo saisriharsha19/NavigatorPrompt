@@ -4,6 +4,7 @@ import { createContext, useContext, useState, ReactNode, useEffect, useCallback 
 import { useToast } from './use-toast';
 import { addHistoryPromptToDB, deleteHistoryPromptFromDB, getHistoryPromptsFromDB } from '@/app/actions';
 import { useAuth } from './use-auth';
+import Cookies from 'js-cookie';
 
 export type Prompt = {
   id: string;
@@ -37,7 +38,8 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
       if (isAuthenticated && userId) {
         try {
           setIsLoading(true);
-          const initialPrompts = await getHistoryPromptsFromDB(userId);
+          const token = Cookies.get('auth_token');
+          const initialPrompts = await getHistoryPromptsFromDB(userId, token);
           setPrompts(initialPrompts || []);
         } catch (error) {
           console.error('Failed to load prompts from history', error);
@@ -71,7 +73,7 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = Cookies.get('auth_token');
       const newPrompt = await addHistoryPromptToDB(text, userId, token);
       setPrompts(prev => [newPrompt, ...prev].slice(0, 20)); // Keep client state in sync with limit
     } catch (error: any) {
@@ -94,7 +96,7 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = Cookies.get('auth_token');
       await deleteHistoryPromptFromDB(id, userId, token);
       setPrompts(prev => prev.filter(p => p.id !== id));
       toast({
@@ -117,10 +119,18 @@ export function PromptHistoryProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function usePromptHistory() {
-  const context = useContext(PromptHistoryContext);
-  if (context === undefined) {
-    throw new Error('usePromptHistory must be used within a PromptHistoryProvider');
+export function usePromptHistory(initialPrompts: Prompt[] = []) {
+    const context = useContext(PromptHistoryContext);
+    if (context === undefined) {
+      throw new Error('usePromptHistory must be used within a PromptHistoryProvider');
+    }
+    // This allows the server-rendered page to provide initial data,
+    // which is then managed by the client-side context.
+    useEffect(() => {
+        if (initialPrompts.length > 0) {
+            context.prompts = initialPrompts;
+        }
+    }, []);
+
+    return context;
   }
-  return context;
-}
