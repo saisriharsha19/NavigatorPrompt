@@ -200,25 +200,42 @@ export function DocumentManager() {
       </AnimatePresence>
 
       <div className="space-y-2">
-        <h4 className="text-sm font-medium">Active Documents</h4>
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-medium">Active Documents</h4>
+          {uploadedFiles.length > 0 && (
+            <span className="text-xs text-green-600 dark:text-green-400 font-medium">
+              ✓ {uploadedFiles.length} document{uploadedFiles.length !== 1 ? 's' : ''} will be included
+            </span>
+          )}
+        </div>
         <div className="min-h-[64px] rounded-lg border bg-muted/50 p-1">
           <div className="max-h-48 space-y-1 overflow-y-auto p-1">
             <TooltipProvider>
               {uploadedFiles.length > 0 ? (
                 <ul className="space-y-1">
                   {uploadedFiles.map((file, index) => (
-                    <li key={file.id} className="flex items-center gap-2 rounded-md p-2 animate-in fade-in-50">
+                    <li key={file.id} className="flex items-center gap-2 rounded-md bg-background p-2 shadow-sm animate-in fade-in-50">
                       <FileText className="h-5 w-5 shrink-0 text-primary dark:text-accent" />
-                        <Tooltip delayDuration={300}>
-                          <TooltipTrigger asChild>
-                            <div className="flex-1 min-w-0">
-                                <span className="text-sm font-medium text-muted-foreground">{`Document ${index + 1}`}</span>
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{file.name}</p>
-                          </TooltipContent>
-                        </Tooltip>
+                      <Tooltip delayDuration={300}>
+                        <TooltipTrigger asChild>
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-medium text-foreground truncate block">
+                              {file.name}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {file.content.length} characters extracted
+                            </span>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <div className="max-w-xs">
+                            <p className="font-medium">{file.name}</p>
+                            <p className="text-xs mt-1">
+                              {file.content.substring(0, 100)}...
+                            </p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -234,12 +251,19 @@ export function DocumentManager() {
                 </ul>
               ) : (
                 <div className="flex h-16 items-center justify-center">
-                  <p className="text-sm text-muted-foreground">{!user ? 'Sign in to add documents.' : 'No document context applied.'}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {!user ? 'Sign in to add documents.' : 'No document context applied.'}
+                  </p>
                 </div>
               )}
             </TooltipProvider>
           </div>
         </div>
+        {uploadedFiles.length > 0 && (
+          <div className="text-xs text-muted-foreground bg-blue-50 dark:bg-blue-950 p-2 rounded border-l-2 border-blue-500">
+            <strong>Note:</strong> These documents will be automatically included as context in all AI operations (generate, evaluate, iterate).
+          </div>
+        )}
       </div>
     </div>
   );

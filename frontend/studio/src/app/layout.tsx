@@ -1,5 +1,6 @@
-// frontend/studio/src/app/layout.tsx - ADD rate limit indicator
-import type {Metadata} from 'next';
+// Your complete app/layout.tsx should look like this:
+
+import type {Metadata, Viewport} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster"
 import { AuthProvider } from '@/hooks/use-auth';
@@ -7,12 +8,32 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { PromptHistoryProvider } from '@/hooks/use-prompts';
 import { PromptForgeProvider } from '@/hooks/use-prompt-forge';
 import { LibraryProvider } from '@/hooks/use-library';
-import { RateLimitIndicator } from '@/components/rate-limit-indicator'; // ADD THIS
+import { RateLimitIndicator } from '@/components/rate-limit-indicator';
 
 export const metadata: Metadata = {
   title: 'Navigator Prompt',
   description: 'Create and iterate on prompts.',
+  icons: {
+    icon: [
+      { url: '/favicon.ico?v=3' },
+      { url: '/NavGAI-19.png?v=3', sizes: '32x32', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/NavGAI-19.png?v=3', sizes: '180x180', type: 'image/png' },
+    ],
+  },
+  manifest: '/manifest.json?v=3',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Navigator Prompt',
+  },
 };
+
+// Add the viewport export to fix the warning
+export const viewport: Viewport = {
+  themeColor: '#f97316',
+}
 
 export default function RootLayout({
   children,
@@ -38,7 +59,7 @@ export default function RootLayout({
                   disableTransitionOnChange
                 >
                   {children}
-                  <RateLimitIndicator /> {/* ADD THIS */}
+                  <RateLimitIndicator />
                 </ThemeProvider>
               </PromptForgeProvider>
             </LibraryProvider>

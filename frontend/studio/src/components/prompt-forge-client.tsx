@@ -79,6 +79,7 @@ export function PromptForgeClient() {
   const {
     userNeeds, setUserNeeds,
     currentPrompt, setCurrentPrompt,
+    uploadedFiles, setUploadedFiles,
     iterationComments, setIterationComments,
     suggestions, setSuggestions,
     selectedSuggestions, setSelectedSuggestions,
@@ -120,6 +121,26 @@ export function PromptForgeClient() {
       ...(token && { 'Authorization': `Bearer ${token}` }),
     };
   }, []);
+
+  // Helper function to get document context
+  const getDocumentContext = useCallback(() => {
+    return uploadedFiles.map(f => `--- DOCUMENT: ${f.name} ---\n${f.content}`).join('\n\n');
+  }, [uploadedFiles]);
+
+  // Helper function to combine user needs with document context
+  const getUserNeedsWithContext = useCallback(() => {
+    const documentsContext = getDocumentContext();
+    if (documentsContext) {
+      return `${documentsContext}\n\n--- USER REQUIREMENTS ---\n${userNeeds}`;
+    }
+    return userNeeds;
+  }, [getDocumentContext, userNeeds]);
+
+  // Helper to combine prompt parts
+  const getFullPromptContext = useCallback(() => {
+    const documentsContext = getDocumentContext();
+    return documentsContext ? `${documentsContext}\n\n--- PROMPT ---\n${currentPrompt}` : currentPrompt;
+  }, [getDocumentContext, currentPrompt]);
 
   const copyToClipboard = (text: string) => {
     if (!text) return;
@@ -288,16 +309,20 @@ export function PromptForgeClient() {
     }
   }, [stopPolling]);
   
+  // Updated onGetSuggestions function with document context
   const onGetSuggestions = async (prompt: string, comments?: string) => {
     if (!prompt || suggestionsLoading) return;
     setSuggestionsLoading(true);
     setSuggestions([]);
     try {
+      const promptWithContext = getDocumentContext() ? 
+        `${getDocumentContext()}\n\n--- PROMPT ---\n${prompt}` : prompt;
+
       const response = await fetch(`${BACKEND_URL}/prompts/suggest-improvements`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          current_prompt: prompt,
+          current_prompt: promptWithContext, // Include document context
           user_comments: comments,
         }),
       });
@@ -315,6 +340,7 @@ export function PromptForgeClient() {
     }
   };
   
+  // Updated onGenerate function
   const onGenerate = async () => {
     if (!userNeeds) {
       toast({ variant: 'destructive', title: 'Error', description: 'Please describe your assistant needs first.' });
@@ -325,10 +351,15 @@ export function PromptForgeClient() {
     setEvaluationResult(null);
     setSuggestions([]);
     try {
+      // Use combined user needs with document context
+      const userNeedsWithContext = getUserNeedsWithContext();
+
       const response = await fetch(`${BACKEND_URL}/prompts/generate`, {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ user_needs: userNeeds }),
+        body: JSON.stringify({ 
+            user_needs: userNeedsWithContext, // Send everything as user_needs
+        }),
       });
       
       if (!response.ok) {
@@ -346,6 +377,7 @@ export function PromptForgeClient() {
     }
   };
 
+  // Updated onEvaluate function
   const onEvaluate = async () => {
     if (!currentPrompt || !userNeeds) {
       toast({ variant: 'destructive', title: 'Error', description: 'A prompt and user needs are required for evaluation.' });
@@ -355,10 +387,16 @@ export function PromptForgeClient() {
     setProcessingState({ activeAction: action, statusText: 'Starting evaluation task...' });
     setEvaluationResult(null);
     try {
+      const promptWithContext = getFullPromptContext();
+      const userNeedsWithContext = getUserNeedsWithContext();
+
       const response = await fetch(`${BACKEND_URL}/prompts/evaluate`, {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ prompt: currentPrompt, user_needs: userNeeds }),
+        body: JSON.stringify({ 
+          prompt: promptWithContext, 
+          user_needs: userNeedsWithContext // Include document context in user_needs too
+        }),
       });
       
       if (!response.ok) {

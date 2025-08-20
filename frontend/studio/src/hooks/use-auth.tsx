@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useToast } from '@/hooks/use-toast';
@@ -40,18 +39,32 @@ const AuthContext = React.createContext<AuthContextType | undefined>(undefined);
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  // Fix 1: Start with consistent initial state
   const [authState, setAuthState] = React.useState<AuthState>({
     isAuthenticated: false,
     user: null,
-    isLoading: true,
+    isLoading: false, // Changed: Start with false to match server
     isAuthLoading: false,
     error: null,
   });
+  
+  // Fix 2: Track hydration state
+  const [isHydrated, setIsHydrated] = React.useState(false);
   const { toast } = useToast();
   const router = useRouter();
   const [showLoginModal, setShowLoginModal] = React.useState(false);
 
+  // Fix 3: Handle hydration
+  React.useEffect(() => {
+    setIsHydrated(true);
+    // Only start loading after hydration
+    setAuthState(prev => ({ ...prev, isLoading: true }));
+  }, []);
+
   const checkAuthStatus = React.useCallback(async () => {
+    // Only run after hydration
+    if (!isHydrated) return;
+    
     try {
       const token = Cookies.get('auth_token');
       if (!token) {
@@ -80,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      // Clear invalid token
       Cookies.remove('auth_token');
       setAuthState({
         isAuthenticated: false,
@@ -99,11 +113,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         error: 'Authentication check failed',
       });
     }
-  }, []);
+  }, [isHydrated]);
 
+  // Fix 4: Only check auth after hydration
   React.useEffect(() => {
-    checkAuthStatus();
-  }, [checkAuthStatus]);
+    if (isHydrated) {
+      checkAuthStatus();
+    }
+  }, [isHydrated, checkAuthStatus]);
   
   const login = React.useCallback(async (email?: string) => {
     setAuthState(prev => ({ ...prev, isAuthLoading: true, error: null }));
@@ -111,22 +128,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       // For production builds or when SAML is explicitly enabled, redirect to SAML login.
       if (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN !== 'true') {
-        window.location.href = `${BACKEND_URL}/auth/saml/login`;
+        // Ensure we're on client side before redirecting
+        if (typeof window !== 'undefined') {
+          window.location.href = `${BACKEND_URL}/auth/saml/login`;
+        }
         return true;
       }
 
       // For development/testing, use the mock login flow.
       if (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN === 'true') {
-        // If no email is provided, it means the user clicked the main "Sign In" button.
-        // So, we show the modal to let them choose a mock user.
+        // If no email is provided, show the modal to let them choose a mock user.
         if (typeof email !== 'string') {
           setShowLoginModal(true);
           setAuthState(prev => ({ ...prev, isAuthLoading: false }));
-          return false; // Return false because the login process isn't complete yet.
+          return false;
         }
 
-        // If an email IS provided, it means it came from the DevLoginModal.
-        // Now we proceed with the mock login API call.
+        // Email provided, proceed with mock login API call.
         const response = await fetch(`${BACKEND_URL}/auth/mock/login`, {
           method: 'POST',
           headers: {
@@ -143,7 +161,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await response.json();
         
         if (data.success && data.access_token) {
-          Cookies.set('auth_token', data.access_token, { expires: 7 });
+          // Set cookie with proper options for production
+          Cookies.set('auth_token', data.access_token, { 
+            expires: 7,
+            secure: false,
+            sameSite: 'lax',
+            path: '/',
+            domain: undefined
+          });
           
           setAuthState({
             isAuthenticated: true,
@@ -158,6 +183,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             description: `Welcome back, ${data.user.name || data.user.username}!`,
           });
           
+          // Close modal and refresh
+          setShowLoginModal(false);
           router.refresh();
           return true;
         } else {
@@ -166,7 +193,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Fallback for production if dev login isn't enabled
-      window.location.href = `${BACKEND_URL}/auth/saml/login`;
+      if (typeof window !== 'undefined') {
+        window.location.href = `${BACKEND_URL}/auth/saml/login`;
+      }
       return true;
 
     } catch (error: any) {
@@ -213,6 +242,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         title: 'Signed Out',
         description: 'You have been signed out successfully.',
       });
+      
+      setShowLoginModal(false);
       router.push('/');
     } catch (error: any) {
       console.error('Logout error:', error);
@@ -228,8 +259,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [toast, router]);
 
   const refreshSession = React.useCallback(async () => {
-    await checkAuthStatus();
-  }, [checkAuthStatus]);
+    if (isHydrated) {
+      await checkAuthStatus();
+    }
+  }, [checkAuthStatus, isHydrated]);
 
   const userId = authState.user?.id || null;
   const isAdmin = authState.user?.is_admin || false;
@@ -245,6 +278,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setShowLoginModal,
   };
 
+  // Fix 5: Show loading during hydration
+  if (!isHydrated) {
+    return (
+      <div className="flex min-h-screen w-full flex-col bg-background">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AuthContext.Provider value={contextValue}>
       {children}
@@ -259,5 +303,3 @@ export function useAuth() {
   }
   return context;
 }
-
-    

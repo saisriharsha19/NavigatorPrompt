@@ -81,56 +81,72 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [loadPrompts]);
 
-  const addLibraryPrompt = useCallback(async (text: string, notes?: string) => {
-    if (!isAuthenticated || !userId) {
-      toast({
-        variant: 'destructive',
-        title: 'Authentication Required',
-        description: 'You must be signed in to submit prompts to the library.',
-      });
-      return;
-    }
-    
-    if (!text.trim()) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Prompt text cannot be empty.',
-      });
-      return;
-    }
-    
-    try {
-      const response = await fetch(`${BACKEND_URL}/user/library/submit`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          prompt_text: text,
-          submission_notes: notes || null,
-        }),
-      });
+// Replace your addLibraryPrompt function with this debug version:
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Failed to submit prompt.' }));
-        throw new Error(errorData.detail || `Request failed with status ${response.status}`);
-      }
-      
-      toast({
-        title: 'Prompt Submitted',
-        description: 'Your prompt has been submitted for admin review and will appear in the library once approved.',
+const addLibraryPrompt = useCallback(async (text: string, notes?: string) => {
+  
+  if (!isAuthenticated || !userId) {
+    console.log('🚀 Authentication check failed');
+    toast({
+      variant: 'destructive',
+      title: 'Authentication Required',
+      description: 'You must be signed in to submit prompts to the library.',
+    });
+    return;
+  }
+  
+  if (!text.trim()) {
+    console.log('🚀 Text validation failed');
+    toast({
+      variant: 'destructive',
+      title: 'Error',
+      description: 'Prompt text cannot be empty.',
+    });
+    return;
+  }
+  
+  // Debug token and headers
+  const token = Cookies.get('auth_token');
+  
+  const headers = getAuthHeaders();
+  
+  const requestBody = {
+    prompt_text: text,
+    submission_notes: notes || null,
+  };
+  
+  try {
+    const response = await fetch(`${BACKEND_URL}/user/library/submit`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch((e) => {
+        return { detail: 'Failed to submit prompt.' };
       });
-      
-      // Re-fetch the entire list to ensure correct order and data.
-      await loadPrompts(false);
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Submission Failed',
-        description: error.message || 'An error occurred while submitting the prompt.',
-      });
-      throw error;
+      throw new Error(errorData.detail || `Request failed with status ${response.status}`);
     }
-  }, [isAuthenticated, userId, toast, loadPrompts, getAuthHeaders]);
+    
+    const responseData = await response.json().catch(() => ({}));
+    
+    toast({
+      title: 'Prompt Submitted',
+      description: 'Your prompt has been submitted for admin review and will appear in the library once approved.',
+    });
+    
+    // Re-fetch the entire list to ensure correct order and data.
+    await loadPrompts(false);
+  } catch (error: any) {
+    toast({
+      variant: 'destructive',
+      title: 'Submission Failed',
+      description: error.message || 'An error occurred while submitting the prompt.',
+    });
+    throw error;
+  }
+}, [isAuthenticated, userId, toast, loadPrompts, getAuthHeaders]);
 
   const deleteLibraryPrompt = useCallback(async (id: string) => {
     if (!isAuthenticated || !isAdmin) {

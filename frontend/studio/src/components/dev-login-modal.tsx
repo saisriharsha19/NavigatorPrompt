@@ -68,7 +68,8 @@ export function DevLoginModal({ isOpen, onClose, onLogin }: DevLoginModalProps) 
     onClose();
   };
 
-  if (process.env.NODE_ENV === 'production') {
+  // FIX: Check NEXT_PUBLIC_ENABLE_DEV_LOGIN instead of NODE_ENV
+  if (process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN !== 'true') {
     return null;
   }
 
